@@ -18,8 +18,8 @@ As part of this programming assignment, you will be using threads to speed up th
 
 3. Make a line plot such that:
     1. one line per n in N
-		2. x=t for t in T
-		3. y=time(n, t)
+    2. x=t for t in T
+    3. y=time(n, t)
 
 ### Non-Functional
 Answer in a text document:
@@ -51,7 +51,21 @@ Answer in a text document:
 
 ## Clarifications from professor:
 
-1. is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
-    we can assume file is in current working directory
-2. what is the format of the input file's contents?
-    binary 64-bit long integers (as opposed to 64-bit long integers encoded as strings)
+> is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
+
+we can assume file is in current working directory
+> what is the format of the input file's contents?
+
+binary 64-bit long integers (as opposed to 64-bit long integers encoded as strings)
+
+> For the evaluation/ranking component of the assignment…
+> * how much memory will be available to the JVM? (I’m mainly concerned with whether we can hold the input file in memory… I think the largest input is 64 * 10^8 bits, about 0.8 GB which is big enough to make me question it, and default JVM max heap sizes vary by implementation and available memory) 
+> * what version of java and JVM will our code run against? (e.g. I’m currently using OpenJDK 16 & HotSpot VM.)
+> * how will time be measured to ensure fairness? E.g.: NTP updates, other processes, cold vs warm CPU cache, page cache, etc.- can have a significant impact on performance.
+
+"Don’t worry about tuning the VM. I will be using the default arguments. Yes, all the issues you mention impact performance, but we’re interested just in the average performance."
+
+> The constraint that we use Java only applies to the concurrent sorting program, right? (e.g., use whatever we want for creating line plots is fine?)
+
+"Any software would do." -Prof
+(Technically, we don't even need to program the testing/plotting- for all he knows or cares, we could invoke by hand and do the plots in an Excel sheet. However, doing it by hand is a risk- if we discover some bug at the last minute and fix it, we would have to do all that work again by hand. Furthermore, automating it allows us to test and compare multiple implementations. - Justin)
