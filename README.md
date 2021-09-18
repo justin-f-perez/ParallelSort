@@ -1,5 +1,31 @@
 # Mobile Computing HW1: ParallelSort
 
+## Contributing
+### tips
+* For simple editing of README it should be fine to just edit directly on the main branch in GitHub, but for everything else...
+
+* Create your own development branch off of main.
+
+* rebase your development branch onto main whenever there are new changes available (the longer you go between rebasing the more painful it will be to resolve merge conflicts)
+
+### example:
+```shell
+git switch -c perez                 # creates a new development branch named "perez"
+
+echo "making changes" >> README.md  # simulates changing some files
+
+git fetch origin main               # updates origin/main branch
+
+git rebase origin/main              # rebases commits of current branch (perez) onto origin/main branch
+
+git push origin +perez              # pushes development branch to remote
+                                    # the '+' means "force push"- because rebasing changes commit history.
+                                    # this is fine to do when you're the only one using a branch.
+                                    # NEVER FORCE PUSH MAIN or any other shared branch
+                                    
+open "https://github.com/justin-f-perez/ParallelSort/compare/main...perez"  # opens this URL in default browser (macOS)
+```
+
 ## Description
 As part of this programming assignment, you will be using threads to speed up the sorting of a (large) file.
 
