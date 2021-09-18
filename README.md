@@ -50,14 +50,15 @@ Answer in a text document:
 
 
 ## Clarifications from professor:
-
+### asked in class
 > is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
 
-we can assume file is in current working directory
+we can assume file is in current working directory -Justin
 > what is the format of the input file's contents?
 
 binary 64-bit long integers (as opposed to 64-bit long integers encoded as strings)
 
+### asked in email
 > For the evaluation/ranking component of the assignment…
 > * how much memory will be available to the JVM? (I’m mainly concerned with whether we can hold the input file in memory… I think the largest input is 64 * 10^8 bits, about 0.8 GB which is big enough to make me question it, and default JVM max heap sizes vary by implementation and available memory) 
 > * what version of java and JVM will our code run against? (e.g. I’m currently using OpenJDK 16 & HotSpot VM.)
