@@ -13,13 +13,6 @@ As part of this programming assignment, you will be using threads to speed up th
 1. The sorting program must accept two command-line arguments: 
     1. The name of an input file containing an array of long integers to be sorted
     2. The name of an output file that includes the sorted input array saved as an array of longs 
-```
-AMBIGUOUS:
-1. is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
-    in cwd
-2. what is the format of the input file's contents?
-    (binary)
-```
 
 2. Measure and store the time it takes the sorting program to sort a file consisting of N={10^5, 10^6, 10^7, 10^8} long integers as you increase the number of threads T={2^0, 2^1, ... 2^7}.
 
@@ -55,3 +48,10 @@ Answer in a text document:
 30 points: Answering the writeup questions
 15 points: Ranking of your solution relative to other’s 
 
+
+## Clarifications from professor:
+
+1. is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
+    we can assume file is in current working directory
+2. what is the format of the input file's contents?
+    binary 64-bit long integers (as opposed to 64-bit long integers encoded as strings)
