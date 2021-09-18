@@ -29,7 +29,6 @@ import java.nio.LongBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.*;
-import java.util.Arrays;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
 
@@ -41,7 +40,6 @@ public class Main {
     public static Path inputPath;  // "name of an input file containing an array of long integers to be sorted"
     public static Path outputPath; // "name of an output file that includes the sorted input array saved as an array of longs"
     public static long inputSize;  // in bytes
-    public static int inputLength; // # of longs
 
     public static void main(String[] args) throws IOException {
 
@@ -57,7 +55,6 @@ public class Main {
         // 32-bit addressing (i.e., max file size is 2 GB)
         // TODO: throw an exception if size > 2 GB or implement a multi-buffer strategy
         inputSize = Files.size(inputPath);
-        inputLength = (int) (inputSize / ((long)Long.SIZE));
 
         // now lets just do a straight copy from input to output so that we can
         // sort in-place on the output file
@@ -66,10 +63,10 @@ public class Main {
         // do all the boilerplate garbage to get something (fc) we can create memory maps from
         try (RandomAccessFile raf = new RandomAccessFile(outputPath.toString(), "rw")) {
             FileChannel fc = raf.getChannel();
-            ForkSorter fs = new ForkSorter(fc, 0, inputLength, numThreads);
+            ForkSorter fs = new ForkSorter(fc, 0, inputSize, numThreads);
             ForkJoinPool pool = new ForkJoinPool();
             pool.invoke(fs);
-        } // i believe `raf` is auto-closed here, which i assume flushes any buffered writes
+        } // I believe `raf` is auto-closed here, which I assume flushes any buffered writes
     }
 }
 
