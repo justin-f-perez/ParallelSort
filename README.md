@@ -84,6 +84,10 @@ we can assume file is in current working directory -Justin
 
 binary 64-bit long integers (as opposed to 64-bit long integers encoded as strings)
 
+> how should the number of threads be handled if the only two inputs to the sorting algorithm are the input file path and output file path?
+
+make the commandline argument for number of threads optional and set a default
+
 ### asked in email
 > For the evaluation/ranking component of the assignment…
 > * how much memory will be available to the JVM? (I’m mainly concerned with whether we can hold the input file in memory… I think the largest input is 64 * 10^8 bits, about 0.8 GB which is big enough to make me question it, and default JVM max heap sizes vary by implementation and available memory) 
