@@ -26,17 +26,19 @@ package hw1;
 
 import java.io.IOException;
 import java.nio.LongBuffer;
-import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.Arrays;
 import java.util.concurrent.RecursiveAction;
 
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 
-class ForkSorter extends RecursiveAction {
+public class ForkSorter extends RecursiveAction {
 
     private final int numThreads;
     private final long position;
     private final long size;
+    private final int length;
+    private final LongAlignedHalves halves;
     FileChannel fc;
 
     ForkSorter(FileChannel fc, long position, long size, int numThreads) {
@@ -44,49 +46,95 @@ class ForkSorter extends RecursiveAction {
         this.position = position;
         this.size = size;
         this.numThreads = numThreads;
+        this.length = (int) (size / Long.BYTES);
+        this.halves = new LongAlignedHalves(position, size);
     }
 
     protected void compute() {
-        // parallel base case
-        final int length = (int) (size / Long.BYTES);
-        if (numThreads == 1 || length == 1) {
-            sequentialSort(position, size);
-        }
-        // parallel recursive case
-        else {
-            final long halfSize = size / 2;  // TODO: what if size is odd?
-            long mid = position + halfSize;
-            invokeAll(
-                    new ForkSorter(fc, position, halfSize, numThreads / 2),
-                    new ForkSorter(fc, mid, halfSize, numThreads / 2)
-            );
-        }
-    }
-
-    // "sequential" meaning "single-threaded", as opposed to "parallel" meaning "multi-threaded"
-    void sequentialSort(long position, long size) {
-        final int length = (int) (size / Long.BYTES);
-        if (length > 1) { // recursive case
-            final long halfSize = size / 2;
-            long mid = position + halfSize;
-            sequentialSort(position, halfSize);
-            sequentialSort(mid, halfSize);
-            merge(position, size, mid);      // where all the actual sorting happens
-        }
-        // base case is just a no-op
-    }
-
-    void merge(long position, long size, long mid) {
-        MappedByteBuffer mbb = null;
         try {
-            mbb = fc.map(READ_WRITE, position, size);
+            if (numThreads > 1 && length > 1) { // parallel recursive case
+                // DEBUG
+//                System.out.println(
+//                    "\nwhole position " + String.valueOf(this.position) +
+//                    "\nwhole size " + String.valueOf(this.size) +
+//                    this.halves);
+
+                invokeAll(
+                        new ForkSorter(fc, this.halves.leftPosition, this.halves.leftSize, numThreads / 2),
+                        new ForkSorter(fc, this.halves.rightPosition, this.halves.rightSize, numThreads / 2)
+                );
+            }
+            sort(fc, position, size);
         } catch (IOException e) {
             e.printStackTrace();
             System.exit(1);
         }
-        LongBuffer lb = mbb.asLongBuffer();
-        long leftIndex = position;
-        long rightIndex = mid;
-        // TODO: implement merge
     }
+
+    private void sort(FileChannel fc, long position, long size) throws IOException {
+        var lock = fc.lock(position, size, false);
+        try {
+
+            var mbb = fc.map(READ_WRITE, position, size);
+            LongBuffer buf = mbb.asLongBuffer();
+
+            // just for testing
+            // this could crash for large inputs as we would eventually
+            // read the entire file into memory on the final 'merge'
+            // furthermore, the implementation of Arrays.sort probably doesn't
+            // take full advantage of the fact that
+            // google "external sorting"
+            long[] arr = new long[buf.limit()];
+            buf.get(arr);
+            Arrays.sort(arr);
+            buf.flip();
+            buf.put(arr);
+
+        } finally {
+            lock.release();
+        }
+    }
+
+    // swaps lb[left] and lb[right] if lb[right] < lb[left]
+    // return value = whether a swap happened
+    boolean swap(LongBuffer lb, int leftIndex, int rightIndex) {
+        var leftVal = lb.get(leftIndex);
+        var rightVal = lb.get(rightIndex);
+        if (rightVal < leftVal) {
+            lb.put(leftIndex, rightVal);
+            lb.put(rightIndex, leftVal);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    class LongAlignedHalves {
+        // what if size/2 splits a long in half?
+        //  e.g., if we have 3 longs initially then we'll end up
+        //    with 1.5 in each half
+        // therefore, we must align the halves to long boundaries
+        public long leftPosition;
+        public long rightPosition;
+        public long leftSize;
+        public long rightSize;
+
+        public LongAlignedHalves(long position, long size) {
+            this.leftPosition = position;
+            final long rawHalfSize = size / 2;
+            long partialSize = rawHalfSize % Long.BYTES;
+            boolean isPartial = partialSize > 0;
+            this.leftSize = rawHalfSize - partialSize; // drop partial long
+            this.rightSize = leftSize + (isPartial ? Long.BYTES : 0);
+            this.rightPosition = position + leftSize;
+        }
+
+        public String toString() {
+            return "\nleft position" + this.leftPosition +
+                    "\nleft size" + this.leftSize +
+                    "\nright position" + this.rightPosition +
+                    "\nright size" + this.rightSize;
+        }
+    }
+
 }
