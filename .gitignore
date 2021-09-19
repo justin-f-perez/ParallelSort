@@ -1,4 +1,4 @@
-array.bin
+*.bin
 
 # everything below is copy pasta
 # source: https://raw.githubusercontent.com/github/gitignore/master/Global/JetBrains.gitignore
