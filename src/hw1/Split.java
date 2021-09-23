@@ -18,6 +18,11 @@ public class Split {
         this.length = length;
     }
 
+    @Override
+    public String toString() {
+        return "Split{bytePosition=" + bytePosition + ", byteSize=" + byteSize + ", index=" + index + ", length=" + length + '}';
+    }
+
     public static Split[] createSplits(long totalByteSize, int splitCount) {
         // check preconditions: 0 <= totalByteSize && 1 <= splitCount && totalByteSize % Long.BYTES == 0
         assert totalByteSize >= 0 : "totalByteSize must be >= 0";
