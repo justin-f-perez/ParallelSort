@@ -1,3 +1,5 @@
+// Author: Justin Perez
+
 package hw1;
 
 import java.io.IOException;
@@ -11,6 +13,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -19,25 +22,34 @@ import static java.nio.file.StandardOpenOption.*;
 // TODO: make sure every closeable resource is getting closed
 //      driver currently hangs on garbage collection after the sort is complete
 public class ParallelExternalLongSorter {
+
+    static final int THREADPOOL_TIMEOUT_SECONDS = 60;
+    static final String DEFAULT_INPUT_FILENAME = "array.bin";
+    static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
+    static final int DEFAULT_NTHREADS = 10;
+
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws IOException, InterruptedException {
         // preconditions:
         //      inputPath points to a readable file that exists and is not a directory
         //      outputPath points to a writeable file path and is not a directory
-        assert nThreads >= 1;
-        assert Files.isReadable(inputPath);
+        debug("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
+        assert nThreads >= 1 : "must have at least 1 thread, not " + nThreads;
+        assert Files.isReadable(inputPath): "input file is not readable";
         validateOutputPath(outputPath);
 
-        // setup
-        ExecutorService executor = Executors.newFixedThreadPool(nThreads);
+        debug("starting setup");
         Path tempFile = Files.createTempFile("external-sort-scratch-space", ".tmp");
         try (
                 FileChannel inputFileChannel = FileChannel.open(inputPath, Set.of(READ));
                 FileChannel scratchFileChannel = FileChannel.open(tempFile, Set.of(DELETE_ON_CLOSE, READ, WRITE));
                 FileChannel outputFileChannel = FileChannel.open(outputPath, Set.of(READ, WRITE))
         ) {
-
-            debug("preparing chunks");
+            debug("JUST GIMME SOME ROOM TO BREATHE (preparing scratch space)");
             long inputSize = inputFileChannel.size();
+            scratchFileChannel.truncate(inputSize);
+            outputFileChannel.truncate(inputSize);
+
+            debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             int chunkCount = getChunkCount(nThreads, inputSize);
             Split[] splits = Split.createSplits(inputSize, chunkCount);
             LongBuffer[] inputChunks = new LongBuffer[chunkCount], scratchChunks = new LongBuffer[chunkCount];
@@ -48,50 +60,80 @@ public class ParallelExternalLongSorter {
                 scratchChunks[i] = scratchFileChannel.map(FileChannel.MapMode.READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
                 chunkSorters[i] = new ChunkSorter(inputChunks[i], scratchChunks[i]);
             }
-
-            debug("queueing chunk sorting jobs");
+            debug("these sheets are so soft! just look at that thread count: " + nThreads);
+            debug("is this expired? its getting chunky (queueing chunk sort jobs)");
+            ExecutorService executor = Executors.newFixedThreadPool(nThreads);
             executor.invokeAll(List.of(chunkSorters));
-            debug("merging");
+            debug("YOU'RE GONNA BE FRIENDS WHETHER YOU LIKE IT OR NOT! (joining threads)");
+            executor.shutdown();
+            debug("GET TO THE CHOPPA! (awaiting threadpool termination)");
+            boolean timedOut = !executor.awaitTermination(THREADPOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (timedOut) throw new RuntimeException("threadpool timed out");
+
             var outputBuffer = outputFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, inputSize).asLongBuffer();
+            debug(""+outputBuffer.get(0));
+            debug(""+outputBuffer.get(1));
+            debug(""+outputBuffer.get(outputBuffer.limit() - 2));
+            debug(""+outputBuffer.get(outputBuffer.limit() - 1));
             merge(scratchChunks, outputBuffer);
-            debug("done!");
+            debug(""+outputBuffer.get(0));
+            debug(""+outputBuffer.get(1));
+            debug(""+outputBuffer.get(outputBuffer.limit() - 2));
+            debug(""+outputBuffer.get(outputBuffer.limit() - 1));
+            debug("kthxbye!");
         }
     }
 
-    private static void debug(String msg) {
-        System.out.println(msg);
-    }
+    private static void debug(String msg) {System.out.println("DEBUG [" + System.nanoTime() + "]: " + msg);}
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        //self test
-        final int inputLength = (int) Math.pow(10, 2); // unit = # of long values
-        final int nThreads = 10;
-        final Path inputPath = Paths.get("array.bin");
-        final Path outputPath = Paths.get("sorted.bin"); // gets written to project root
+        // zZzZzZ parsing args
+        String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
+        String outputFileName = (args.length < 2) ? DEFAULT_OUTPUT_FILENAME : args[1];
+        final int nThreads = (args.length < 3) ? DEFAULT_NTHREADS : Integer.parseInt(args[2]);
+        final Path inputPath = Paths.get(inputFileName);
+        final Path outputPath = Paths.get(outputFileName);
 
-        long generatorStart = System.nanoTime();
-        new DataFileGenerator(inputPath.toString(), inputLength).generate();
-        long generatorStop = System.nanoTime();
-        double generatorElapsedSeconds = (double) (generatorStop - generatorStart) / Math.pow(10, 9);
-        System.out.printf("Finished writing test file in %,.3f seconds%n", generatorElapsedSeconds);
+        if (args.length >= 4) {
+            final int inputLength = Integer.parseInt(args[3]); // unit = # of long values
+            long generatorStart = System.nanoTime();
+            new DataFileGenerator(inputPath.toString(), inputLength).generate();
+            long generatorStop = System.nanoTime();
+            double generatorElapsedSeconds = (double) (generatorStop - generatorStart) / Math.pow(10, 9);
+            System.out.printf("Finished writing test file with %d long integers in %,.3f seconds%n",
+                    inputLength, generatorElapsedSeconds);
+        }
 
+        // time for magic
         new ParallelExternalLongSorter(inputPath, outputPath, nThreads);
-        try (var sortedFC = FileChannel.open(outputPath)) {
-            assertSorted(sortedFC.map(FileChannel.MapMode.READ_ONLY, 0, (long) inputLength * Long.BYTES).asLongBuffer());
+        try(
+            FileChannel inFC = FileChannel.open(inputPath, Set.of(READ));
+            FileChannel outFC = FileChannel.open(outputPath, Set.of(READ, WRITE))
+        ){
+            assert (inFC.size() == outFC.size()) : "expected in size (" + inFC.size() + ") == out size (" + outFC.size() + ")";
+            var in = inFC.map(FileChannel.MapMode.READ_ONLY, 0, inFC.size()).asLongBuffer();
+            var out= outFC.map(FileChannel.MapMode.READ_ONLY, 0, outFC.size()).asLongBuffer();
+            assert isEmpty(in) == isEmpty(out) : "expected output to be all 0's only if input is all 0's";
         }
     }
 
     private static void validateOutputPath(Path outputPath) {
         if (Files.exists(outputPath)) {
-            assert !Files.isDirectory(outputPath) && Files.isWritable(outputPath);
+            assert !Files.isDirectory(outputPath) : "output path should be a file, not dir";
+            assert Files.isWritable(outputPath) : "output path already exists and isn't writable";
         } else {
             Path parent = outputPath.getParent();
-            assert Files.exists(parent) && Files.isWritable(parent);
+            assert Files.exists(parent) : "parent directory of output path doesn't exist" ;
+            assert Files.isWritable(parent) : "parent directory of output path isn't writable";
         }
     }
 
-    private static void assertSorted(LongBuffer lb) {
-        assert IntStream.range(0, lb.limit() - 1).allMatch(i -> lb.get(i) <= lb.get(i + 1));
+    private static boolean isSorted(LongBuffer lb) {
+        return IntStream.range(0, lb.limit() - 1).allMatch(i -> lb.get(i) <= lb.get(i + 1));
+    }
+
+    private static boolean isEmpty(LongBuffer lb) {
+        return IntStream.range(0, lb.limit()).allMatch(i -> lb.get(i) == 0);
     }
 
     /*
@@ -121,10 +163,16 @@ public class ParallelExternalLongSorter {
             chunkMultiplier = chunkMultiplier + 1;
             count = nThreads * chunkMultiplier;
             expectedPeakMemoryUse = inputByteSize / count;
-        } while (expectedPeakMemoryUse > workingMemoryLimit);
+        } while (expectedPeakMemoryUse > workingMemoryLimit && 60000 >= count && count >= 0);
 
-        assert count > 0;
-        debug("Chunk count:" + count);
+        if (count > 60000) {
+            // on most systems Java will choke if you try to do ~64k+ mmaps
+            // src: https://mapdb.org/blog/mmap_files_alloc_and_jvm_crash/
+            throw new RuntimeException("Aborting: Attempted to allocate too many chunks");
+        }
+
+        assert count > 0 : "integer overflow occurred while trying to get chunk count";
+        debug("Count Chunkula: " + count);
         return count;
     }
 
@@ -143,26 +191,28 @@ public class ParallelExternalLongSorter {
         //      https://dzone.com/articles/how-much-memory-does-a-java-thread-take
         final long overhead = 128 * MB;
         var workingMemoryLimit = jvmMaxHeap - overhead;
-        debug("working memory limit: " + workingMemoryLimit);
+        debug("working memory limit (MB): " + (workingMemoryLimit / MB));
         return workingMemoryLimit;
     }
 
     private void merge(LongBuffer[] presortedChunks, LongBuffer output) {
-        debug("preparing to merge chunks, verifying preconditions");
+        debug("applying coconut oil (verifying merge preconditions)");
         // check preconditions
-        assert output.position() == 0;  // nothing has been written to output yet
+        assert output.position() == 0 : "expected output buffer to start at position 0";  // nothing has been written to output yet
         // output buffer is same size as cumulative size of presortedChunks
-        assert output.limit() == Stream.of(presortedChunks).mapToInt(Buffer::limit).sum();
+        assert output.limit() == Stream.of(presortedChunks).mapToInt(Buffer::limit).sum() : "expected output & scratch chunks to be same size";
         // nothing has been read from presortedChunks yet
-        assert Stream.of(presortedChunks).allMatch(c -> c.position() == 0);
-        for (var c : presortedChunks) assertSorted(c);
+
+        // TODO: this should actually fail every time, verify and delete this line
+        assert Stream.of(presortedChunks).allMatch(c -> c.position() == 0) : "expected scratch chunks to be at position 0";
+
+        for (var c : presortedChunks) assert isSorted(c) : "expected scratch chunks to be pre-sorted";
 
         PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
         // initially populate the heap with any non-empty chunk
         for (var chunk : presortedChunks) {
             if (chunk.hasRemaining()) minHeap.add(chunk);
         }
-        debug("merging chunks");
         LongBuffer chunkWithSmallestValue = minHeap.poll();
         while (chunkWithSmallestValue != null) {
             output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
@@ -172,12 +222,11 @@ public class ParallelExternalLongSorter {
             chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
         }
 
-        debug("merged chunks, verifying post-conditions");
         // check post conditions
-        assert output.position() == output.limit(); // output is full
-        assert Stream.of(presortedChunks).noneMatch(Buffer::hasRemaining); // all elements in scratch space written to output
-        assertSorted(output);
-        debug("merged chunks, post-conditions verified");
+        assert output.position() == output.limit() : "expected output buffer's position to be at limit"; // output is full
+        assert Stream.of(presortedChunks).noneMatch(Buffer::hasRemaining) : "expected all chunks to be drained"; // all elements in scratch space written to output
+        assert isSorted(output) : "expected output to be sorted";
+        debug("wow, the chunks are gone! you really can use coconut oil for everything (merge finished)");
     }
 
     private static class ChunkHeadComparator implements Comparator<LongBuffer> {
@@ -188,27 +237,21 @@ public class ParallelExternalLongSorter {
         }
     }
 
-    private static class ChunkSorter implements Callable<Void> {
-        //private class ChunkSorter implements Runnable {
-        //private class ChunkSorter extends RecursiveAction {
-        private final LongBuffer input;
-        private final LongBuffer output;
-
+    private record ChunkSorter(LongBuffer input, LongBuffer output) implements Callable<Void> {
         // precondition: this.input and this.output are small enough to hold in memory
-        public ChunkSorter(LongBuffer input, LongBuffer output) {
-            this.input = input;
-            this.output = output;
-        }
 
         @Override
         public Void call() throws Exception {
-            debug("sorting chunk");
+            assert input.position() == output.position() : "expected chunk in/out to have same position";
+            assert input.limit() == output.limit() : "expected chunk in/out to have same limit";
+            debug("preparing outdated VCR references (sorting chunk)");
+            output.mark();
             long[] tmp = new long[input.remaining()];
             input.get(tmp);
             Arrays.sort(tmp);
             output.put(tmp);
-            debug("finished sorting chunk, rewinding chunk buffer");
-            output.position(0);
+            debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
+            output.reset();
             return null;
         }
 

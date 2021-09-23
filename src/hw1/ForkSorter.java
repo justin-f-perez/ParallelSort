@@ -1,4 +1,11 @@
-/* The basic idea:
+/*   ABANDONED
+ * This was my first attempt at solving the problem. However, I started from scratch
+ * with a FixedThreadPool because it's not clear to me that the 'parallelism' parameter
+ * actually sets a hard limit on the number of concurrently executing threads. - Justin
+ *
+ * Author: Justin Perez
+ *
+ * The basic idea:
  * given a number of threads T that we'll parallelize our sorting algorithm on,
  * perform a merge sort where we spawn new threads each time we divide the input
  * in half, where each thread has an exclusive memory-map of the region of the file
@@ -21,13 +28,14 @@
  *
  *
  * */
-
+; // This semi-colon is placed here intentionally to prevent compilation.
 package hw1;
 
 import java.io.IOException;
 import java.nio.LongBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
+import java.util.Spliterators;
 import java.util.concurrent.RecursiveAction;
 
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
@@ -71,28 +79,27 @@ public class ForkSorter extends RecursiveAction {
         }
     }
 
+    private void externalHeapSort(FileChannel fc, long position, long size) throws IOException {
+        var lock = fc.lock(position, size, false);
+        lock.release();
+    }
+
     private void sort(FileChannel fc, long position, long size) throws IOException {
         var lock = fc.lock(position, size, false);
-        try {
+        var mbb = fc.map(READ_WRITE, position, size);
+        LongBuffer buf = mbb.asLongBuffer();
 
-            var mbb = fc.map(READ_WRITE, position, size);
-            LongBuffer buf = mbb.asLongBuffer();
+        // just for testing
+        // this does crash for large inputs as we eventually read the entire file into memory...
+        // tested by setting -xmx256m and attempting to sort a 763M file
+        long[] arr = new long[buf.limit()];
+        buf.get(arr);
+        Arrays.sort(arr);
+        buf.flip();
+        buf.put(arr);
 
-            // just for testing
-            // this could crash for large inputs as we would eventually
-            // read the entire file into memory on the final 'merge'
-            // furthermore, the implementation of Arrays.sort probably doesn't
-            // take full advantage of the fact that
-            // google "external sorting"
-            long[] arr = new long[buf.limit()];
-            buf.get(arr);
-            Arrays.sort(arr);
-            buf.flip();
-            buf.put(arr);
+        lock.release();
 
-        } finally {
-            lock.release();
-        }
     }
 
     // swaps lb[left] and lb[right] if lb[right] < lb[left]
