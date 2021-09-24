@@ -1,16 +1,17 @@
-Please turn in your code on ICON along with a document answering the following questions:
+# Discussion
 
 ## Implementation
 
+### High Level
 I employ a divide-and-conquer strategy, splitting the sorting problem into independent sub-problems, by:
 * slicing the input into multiple (non-overlapping) chunks
 * spawning worker threads to sort each chunk independently (ensuring no chunk is concurrently accessed by more than one thread at a time)
 * joining the worker threads
 * merging the (locally) sorted chunks via merge-sort
 
-Spawning threads that do no work *might* fit the assignment requirements by a narrow, literal interpretation- but not in spirit. For example, in the case that there is only one chunk to be sorted among a group of three worker threads, only one of them would ever do any work. Thus, not only can chunks be sorted in parallel, but for a multi-way merge sort where the number of active threads is fixed, they must be done in parallel. Merging can also be performed in parallel if this merge-sort algorithm is applied recursively.
+Spawning threads that do no work *might* fit the assignment requirements by a narrow, literal interpretation- but not in spirit. For example, in the case that there is only one chunk to be sorted among a group of three worker threads, only one of them would ever do any work. Thus, not only can chunks be sorted in parallel, but for a multi-way merge sort where the number of active threads is fixed, they must be done in parallel. Merging can also be performed in parallel if this merge-sort algorithm is applied recursively, but I opt not to.
 
-We can't just recurse until chunk size is 1 byte, though!  Contrary to popular belief among middle management at retail outlets everywhere, creating more work for your alredy saturated workers does not make them work faster. CPU cycles are a finite resource, as is the number of idle cores new threads can take advantage of. Every cycle spent instantiating new threads or data structures to represent a chunk sorting task is a cycle that can't be spent on making a comparison. Furthermore, these objects have a memory cost that is realized on the JVM heap (risking an OOM crash for large inputs), the stack (risking stack overflow), or non-volatile storage (consuming I/O bandwidth, which is a hardware-based bottleneck on many systems). Thus, relative system overhead increases as chunk size decreases- even when the number of threads remains fixed.
+We should first consider the extreme case- we can't just recurse until chunk size is 1 byte!  Contrary to popular belief among middle management at retail outlets everywhere, creating more work for your already saturated workers does not make them work faster. CPU cycles are a finite resource, as is the number of idle cores new threads can take advantage of. Every cycle spent instantiating new threads or data structures to represent a chunk sorting task is a cycle that can't be spent on making a comparison. Furthermore, these objects have a memory cost that is realized on the JVM heap (risking an OOM crash for large inputs), the stack (risking stack overflow), or non-volatile storage (consuming I/O bandwidth, which is a hardware-based bottleneck on many systems). Thus, relative system overhead increases as chunk size decreases- even when the number of threads remains fixed.
 
 The problem of bottlenecking on non-volatile storage I/O is non-trivial, in part because of how little is known about the target platform/hardware that this program will be evaluated on (but not for a lack of trying, most of my questions along this line didn't get a response.) "In the real world" software specifications include target platforms, supported dependency versions, and minimum hardware requirements. I don't even know what version of java the program will run against or how much physical memory is available, which also means it's not possible to determine what the default parameters given to the JVM (including max heap size) will be. Furthermore, a rotating hard disk, for example, has poor random read/write speed and sequential read/write throughput. SSDs fare much better for random access and throughput. State of the art NVMe drives are all but guaranteed to not be a bottleneck. 
 
@@ -37,7 +38,7 @@ if min_heap has remaining elements:
     GOTO LOOP
 ```
 
-Although this merging algorithm uses multiple memory mapped byte buffers as input, the algorithm is only run on the main thread. Allocating threads to the chunk sorting tasks is handled by a FixedThreadPool, each sorting a mutually exclusive region of the input file into a mutually exclusive region of the scratch file, and only after joining these threads is merging performed.
+Although this merging algorithm uses multiple memory mapped byte buffers as input, the algorithm is only run on the main thread. Allocating threads to the chunk sorting tasks is handled by a FixedThreadPool, each sorting a mutually exclusive region of the input file into a mutually exclusive region of the scratch file, and only after joining these threads is merging performed. Finally, even though I don't think it's necessary, I had each ChunkSorter add a lock on the FileChannels for input and scratch space while it's doing sorting, and had the main thread lock the scratch and output FileChannels during merging.
 
 
 ## Evaluation
@@ -49,16 +50,31 @@ I wrote a JupyterLab notebook using a mixture of python and shell script to invo
 
 The repository can be found [here](https://github.com/justin-f-perez/ParallelSort). It's currently private, but will be made public following this assignment's due date. Alternatively, just send me your GitHub username and I'll grant private access. Static versions of the charts are presented below.
 
-4. Given the collected data and the plots, discuss how your implementation scales. Your discussion should highlight:
+## Given the collected data and the plots, discuss how your implementation scales. Your discussion should highlight:
 
-a. What is the best-case scenario performance improvements that you would expect to see as the number of threads is increased?
+### What is the best-case scenario performance improvements that you would expect to see as the number of threads is increased?
 
-b. If this best-case scenario is not achieved, describe the factors that contribute to the suboptimal performance improvement achieved by multi-threading.
+### If this best-case scenario is not achieved, describe the factors that contribute to the suboptimal performance improvement achieved by multi-threading.
 
-c. What other optimizations might you include to improve the scalability of your approach further?
+### What other optimizations might you include to improve the scalability of your approach further?
 
-I would rewrite in a language that isn't Java, both for performance reasons, and because I find Java's bloated libraries and API design annoying and cumbersome. This causes major drag on my dev workflow, and makes iterating on and debugging programs that much slower.
+I would start by rewriting it either in a more performant language, or a less performant but higher level language that would allow me to iterate on my algorithm faster (and rewrite it again in a faster language later). I think 
+
+I would rewrite in a language that isn't Java, both for performance reasons, and because I find Java's bloated libraries and API design annoying and cumbersome. Similarly, reading the Java documentation is a chore. The options, it would seem, are  This causes major drag on my dev workflow, and makes iterating on and debugging programs that much slower. While many of the most popular languages for rapid development are not highly performant, algorithm design is more important, and a good programming language should encourage developers to explore the solution space efficiently
 
 For this particular problem (external sort)
 
 5. Briefly state how much time you spent on the assignment and what you have learned.
+
+I've put around 80 hours into this project because so far I'm the only one contributing to the repository.
+* 20-25 hours: understanding the problem, asking clarifying questions, learning Java, setting up my dev environment, small practice programs, and feeling out the Java ecosystem
+* 20-25 hours: writing and debugging my first attempt at an implementation using a recursive version of this algorithm using a ForkJoinPool (it wasn't really clear to me whether the "parallelism" parameter strictly controlled the number of threads or not, so I abandoned this strategy).
+* a few hours of pure group overhead. We exchanged GitHub usernames, I created a repo Sat Sep 18 and met with the group and took the time to explain what I'd come up with so far... no one else has contributed any commits yet.
+* 30-35 hours: writing a non-recursive version of the algorithm, testing, debugging, writing the python notebook for plotting the charts, etc.
+
+I've learned:
+* a lot about Java- I haven't touched it since the late 2000's. I'd forgotten pretty much all of it, and a lot has changed.
+* the history of file I/O in Java (is every Java programmer a historian?)
+* a new plotting library I'd never used before, Altair. It worked pretty great! I'd say it was easier to get going with than matplotlib or seaborn (two other graphical plotting packages for python).
+* how the operating system page cache works (not at a very detailed level, but much more than I knew before this project.)
+* divide and conquer is an effective strategy for implementing parallelism while avoiding most of the headaches involved with properly implementing concurrency mechanisms.
