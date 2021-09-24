@@ -83,6 +83,9 @@ Answer in a text document:
 
 ## Clarifications from professor:
 ### asked in class
+> Can we use Arrays.sort()?
+Yes, the point of the project isn't sorting, but it is about concurrency (so `Arrays.parallelSort()` is off the table)
+
 > is 'name' the name of a file in the current working directory, a relative path, or an absolute path?
 
 we can assume file is in current working directory -Justin
