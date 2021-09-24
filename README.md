@@ -1,4 +1,10 @@
 # Mobile Computing HW1: ParallelSort
+## Quick start
+### Java
+You can load this project in intellij to compile the java classes. Please don't commit your compiled output. There's an entrypoint in the ParallelExternalSorter class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code.
+
+### Python Notebook
+Make sure you've already built the Java project and then follow [this README](discussion/README.md).
 
 ## Contributing
 ### tips
