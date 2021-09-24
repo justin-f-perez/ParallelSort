@@ -2,6 +2,7 @@
 *.csv
 *.log
 *.bkp
+untitled.md
 
 # everything below is copy pasta
 # source: https://raw.githubusercontent.com/github/gitignore/master/Global/JetBrains.gitignore
