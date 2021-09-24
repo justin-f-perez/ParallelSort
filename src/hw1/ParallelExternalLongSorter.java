@@ -26,6 +26,7 @@ public class ParallelExternalLongSorter {
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
     static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
+    private static final int BASE_CHUNK_MULTIPLER = 1;
 
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
         debug("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
@@ -177,7 +178,7 @@ public class ParallelExternalLongSorter {
         //      until the entire input is sorted
         //      ... so if the answer is "yes", we should initialize chunkMultiplier to a higher value
         long workingMemoryLimit = getWorkingMemoryLimit(), expectedPeakMemoryUse;
-        int count, chunkMultiplier = 0;
+        int count, chunkMultiplier = BASE_CHUNK_MULTIPLER - 1;
 
         do {
             chunkMultiplier = chunkMultiplier + 1;
@@ -222,29 +223,35 @@ public class ParallelExternalLongSorter {
         assert output.capacity() == Stream.of(presortedChunks).mapToInt(Buffer::capacity).sum() : "expected output & scratch chunks to be same size";
         assert output.limit() == Stream.of(presortedChunks).mapToInt(Buffer::limit).sum() : "expected output & scratch chunks to be same size";
         // nothing has been read from presortedChunks yet
-
-
         assert Stream.of(presortedChunks).allMatch(c -> c.position() == 0) : "expected scratch chunks to be at position 0";
-        // a little counter-intuitive, but they *should* all be 0  because...
+        // a little counter-intuitive, but they *should* all be 0  because 'position' is relative to the underlying byte
+        // buffer's address
         assert IntStream.range(0, presortedChunks.length-1).allMatch(
                 i -> presortedChunks[i].limit() == 0 || presortedChunks[i].get(0) != presortedChunks[i+1].get(0));
-        // 'position' is relative to the underlying byte buffer's address
-
         for (var c : presortedChunks) assert isSorted(c) : "expected scratch chunks to be pre-sorted";
 
-        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
-        // initially populate the heap with any non-empty chunk
-        for (var chunk : presortedChunks) {
-            if (chunk.hasRemaining()) minHeap.add(chunk);
-        }
-        LongBuffer chunkWithSmallestValue = minHeap.poll();
-        while (chunkWithSmallestValue != null) {
-            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
-            if (chunkWithSmallestValue.hasRemaining()) {
-                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
-            }
-            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
-        }
+        // BEGIN MERGE 2.0
+        var ts = new TreeSet<Long>();
+        // add first element from each chunk
+        for (var c:presortedChunks) if (c.hasRemaining()) ts.add(c.get());
+        var c = presortedChunks[0];
+        // after each time we pop off an element, see which chunk it came from
+        // and then increment that chunks position
+        // finally, if that chunk has remaining elements, grab another one
+
+//        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
+//        // initially populate the heap with any non-empty chunk
+//        for (var chunk : presortedChunks) {
+//            if (chunk.hasRemaining()) minHeap.add(chunk);
+//        }
+//        LongBuffer chunkWithSmallestValue = minHeap.poll();
+//        while (chunkWithSmallestValue != null) {
+//            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
+//            if (chunkWithSmallestValue.hasRemaining()) {
+//                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
+//            }
+//            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
+//        }
 
         // check post conditions
         assert output.position() == output.limit() : "expected output buffer's position to be at limit"; // output is full
