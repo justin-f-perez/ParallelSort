@@ -2,7 +2,6 @@
 
 package hw1;
 
-import java.io.IOException;
 import java.nio.Buffer;
 import java.nio.LongBuffer;
 import java.nio.channels.FileChannel;
@@ -21,23 +20,20 @@ import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 import static java.nio.file.StandardOpenOption.*;
 
-// TODO: make sure every closeable resource is getting closed
-//      driver currently hangs on garbage collection after the sort is complete
 public class ParallelExternalLongSorter {
 
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
-    static final int DEFAULT_NTHREADS = 10;
+    static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
 
-    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws IOException, InterruptedException {
-        // preconditions:
-        //      inputPath points to a readable file that exists and is not a directory
-        //      outputPath points to a writeable file path and is not a directory
+    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
         debug("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
         assert nThreads >= 1 : "must have at least 1 thread, not " + nThreads;
+        assert !Files.isDirectory(inputPath) : "check yourself before you directoryour self";
         assert Files.isReadable(inputPath) : "input file is not readable";
-        outputPath.toFile().delete();
+        var oldOutputDeleted = outputPath.toFile().delete();
+        debug((oldOutputDeleted ? "get that nasty mess out of here " : "it was like that when i got here!") + outputPath);
         validateOutputPath(outputPath);
 
         debug("starting setup");
@@ -52,16 +48,21 @@ public class ParallelExternalLongSorter {
             scratchFileChannel.truncate(inputSize);
             outputFileChannel.truncate(inputSize);
 
+            var didShortcut = tryShortcut(nThreads, inputFileChannel, outputFileChannel);
+            if (didShortcut) {
+                debug("2ez, im going home early");
+                return;
+            }
+
+
             debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             int chunkCount = getChunkCount(nThreads, inputSize);
             Split[] splits = Split.createSplits(inputSize, chunkCount);
-            for (Split split: splits) debug(split);
             ChunkSorter[] chunkSorters = new ChunkSorter[chunkCount];
             for (int i = 0; i < splits.length; i++) {
                 var split = splits[i];
-                var chunk = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
-                chunkSorters[i] = chunk;
-                System.out.println(chunkSorters[i].toString());
+                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
+                chunkSorters[i] = chunkSorter;
             }
             debug("these sheets are so soft! just look at that thread count: " + nThreads);
             debug("is this expired? its getting chunky (queueing chunk sort jobs)");
@@ -80,25 +81,28 @@ public class ParallelExternalLongSorter {
                 scratchChunks[i] = scratchFileChannel.map(READ_ONLY, splits[i].bytePosition, splits[i].byteSize).asLongBuffer();
             }
             var outputBuffer = outputFileChannel.map(READ_WRITE, 0, inputSize).asLongBuffer();
-            debug("" + outputBuffer.get(0));
-            debug("" + outputBuffer.get(1));
-            debug("" + outputBuffer.get(outputBuffer.limit() - 2));
-            debug("" + outputBuffer.get(outputBuffer.limit() - 1));
+            debug("first element (pre-merge)" + outputBuffer.get(0));debug("last" + outputBuffer.get(outputBuffer.limit() - 1));
             merge(scratchChunks, outputBuffer);
-            debug("" + outputBuffer.get(0));
-            debug("" + outputBuffer.get(1));
-            debug("" + outputBuffer.get(outputBuffer.limit() - 2));
-            debug("" + outputBuffer.get(outputBuffer.limit() - 1));
-            debug("kthxbye!");
+            debug("first element (post-merge)" + outputBuffer.get(0));debug("last" + outputBuffer.get(outputBuffer.limit() - 1));
             outputLock.release();
             scratchLock.release();
+            debug("doing the world a favor and ending another java process (all done)");
         }
+    }
+
+    private boolean tryShortcut(int nThreads, FileChannel inputFileChannel, FileChannel outputFileChannel) throws Exception {
+        if (nThreads == 1) {
+            ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
+            chunkSorter.call();
+            return true;
+        }
+        return false;
     }
 
     private static void debug(String msg) {System.out.println("DEBUG [" + System.nanoTime() + "]: " + msg);}
     private static void debug(Object msg) {System.out.println("DEBUG [" + System.nanoTime() + "]: " + msg);}
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main(String[] args) throws Exception {
         // zZzZzZ parsing args
         debug(args);
         String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
@@ -108,6 +112,7 @@ public class ParallelExternalLongSorter {
         final Path outputPath = Paths.get(outputFileName).toAbsolutePath();
         debug("you put your long ints in " + inputPath);
         debug("you take your long ints out" + outputPath);
+        debug("hardcore, " + DEFAULT_NTHREADS + " cores");
 
         if (args.length >= 4) {
             final int inputLength = Integer.parseInt(args[3]); // unit = # of long values
@@ -193,23 +198,22 @@ public class ParallelExternalLongSorter {
 
     // returns the amount of RAM we can safely use without causing OOM errors
     private long getWorkingMemoryLimit() {
-        // naive implementation
-        final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
+        // final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
         final long MB = (long) Math.pow(10, 6); // Megabyte (SI unit)
-        // TODO: implement a real check to see how much memory we have, 1 GB is a conservative figure as we expect this
-        //  to be run on a machine with >4GB RAM and with default JVM arguments
-        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1GB"
-        //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
-        @SuppressWarnings("PointlessArithmeticExpression") final long jvmMaxHeap = 1 * GB;
+
         // TODO: do some profiling to figure out how much overhead there really is
         //      looks like there's a 1MB overhead just for creating a thread
         //      https://dzone.com/articles/how-much-memory-does-a-java-thread-take
+        // naive implementation - save some space just in case
         final long overhead = 128 * MB;
-        var workingMemoryLimit = jvmMaxHeap - overhead;
-        debug("working memory limit (MB): " + (workingMemoryLimit / MB));
+        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1GB"
+        //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
+        var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
+        debug("pepperidge farm remembers (MB): " + (workingMemoryLimit / MB));
         return workingMemoryLimit;
     }
 
+    // TODO: too slow
     private void merge(LongBuffer[] presortedChunks, LongBuffer output) {
         debug("applying coconut oil (verifying merge preconditions)");
         // check preconditions
@@ -224,6 +228,7 @@ public class ParallelExternalLongSorter {
         // a little counter-intuitive, but they *should* all be 0  because...
         assert IntStream.range(0, presortedChunks.length-1).allMatch(
                 i -> presortedChunks[i].limit() == 0 || presortedChunks[i].get(0) != presortedChunks[i+1].get(0));
+        // 'position' is relative to the underlying byte buffer's address
 
         for (var c : presortedChunks) assert isSorted(c) : "expected scratch chunks to be pre-sorted";
 

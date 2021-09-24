@@ -11,7 +11,7 @@ public class Split {
     long index;
     long length;
 
-    private Split(long index, long length) {
+    public Split(long index, long length) {
         this.bytePosition = index * Long.BYTES;
         this.byteSize = length * Long.BYTES;
         this.index = index;

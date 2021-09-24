@@ -1,0 +1,4 @@
+#!/bin/sh
+# src: https://medium.com/somosfit/version-control-on-jupyter-notebooks-6b67a0cf12a3
+jupyter nbconvert --ClearOutputPreprocessor.enabled=True --inplace notebooks/*.ipynb
+git add .
