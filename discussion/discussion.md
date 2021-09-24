@@ -57,24 +57,35 @@ The repository can be found [here](https://github.com/justin-f-perez/ParallelSor
 ### If this best-case scenario is not achieved, describe the factors that contribute to the suboptimal performance improvement achieved by multi-threading.
 
 ### What other optimizations might you include to improve the scalability of your approach further?
+Ultimately, it's pretty hard to tell what should be optimized for to improve real-time execution speed on my own machine. It's mostly been guess-and-check. The Intellij async profiler crashes on large inputs (even though the program runs fine without the profiler)- one of many benefits to developing in a language that practically forces you to use an IDE, I guess.
 
-I would start by rewriting it either in a more performant language, or a less performant but higher level language that would allow me to iterate on my algorithm faster (and rewrite it again in a faster language later). I think 
+The first thing I would do is either
+1. figure out measures of scalability that aren't locked to a specific platform/target (e.g., I/O complexity, time complexity, space complexity, etc; whereas wall-clock/real time is completely dependent system configuration), or
+2. set limits on what hardware/platforms my approach will support so I don't waste my time making useless optimizations. Consider three configurations:
+    1. 1GB RAM/64 cores/HDD hard disk - should be optimized for space complexity
+    2. 16 GB RAM/2 core/NVMe - should be optimized for time complexity
+    3. 128 GB RAM/8 cores/HDD - should be optimized for I/O complexity
 
-I would rewrite in a language that isn't Java, both for performance reasons, and because I find Java's bloated libraries and API design annoying and cumbersome. Similarly, reading the Java documentation is a chore. The options, it would seem, are  This causes major drag on my dev workflow, and makes iterating on and debugging programs that much slower. While many of the most popular languages for rapid development are not highly performant, algorithm design is more important, and a good programming language should encourage developers to explore the solution space efficiently
+For the first approach, I'd rewrite in a higher level language so I can iterate on my approach faster (and avoid Java's baggage). For the second, I'd rewrite in a more performant language like C or Rust.
 
-For this particular problem (external sort)
+It could be useful to explore alternative models for "chunking". For example, we might see some improvements in I/O (in terms of page cache hits/misses) if we align chunks to page boundaries. It would also be a good idea to experiment with chunk size and ordering. For example, what if we use a task queue instead of a task pool? What's the optimal "chunk size" for balancing work between the threads (e.g., if we just have as many chunks as we do cores and one thread completes early, it can't "help" the other threads complete their chunk.)
+
+Implementing a counting sort like bucket sort could improve parallelism 
 
 5. Briefly state how much time you spent on the assignment and what you have learned.
 
 I've put around 80 hours into this project because so far I'm the only one contributing to the repository.
 * 20-25 hours: understanding the problem, asking clarifying questions, learning Java, setting up my dev environment, small practice programs, and feeling out the Java ecosystem
 * 20-25 hours: writing and debugging my first attempt at an implementation using a recursive version of this algorithm using a ForkJoinPool (it wasn't really clear to me whether the "parallelism" parameter strictly controlled the number of threads or not, so I abandoned this strategy).
-* a few hours of pure group overhead. We exchanged GitHub usernames, I created a repo Sat Sep 18 and met with the group and took the time to explain what I'd come up with so far... no one else has contributed any commits yet.
-* 30-35 hours: writing a non-recursive version of the algorithm, testing, debugging, writing the python notebook for plotting the charts, etc.
+* a few hours of pure group overhead. We exchanged GitHub usernames, I created a repo Sat Sep 18 and met with the group and took the time to explain what I'd come up with so far... I haven't seen a single line of code- I'm the only committer among all branches in the repository. (If you're reading this and you've contributed anything, please remove this line...)
+* 30-35 hours: writing a non-recursive version of the algorithm, testing, debugging, writing the python notebook for plotting the charts, this discussion document, etc.
 
 I've learned:
 * a lot about Java- I haven't touched it since the late 2000's. I'd forgotten pretty much all of it, and a lot has changed.
 * the history of file I/O in Java (is every Java programmer a historian?)
 * a new plotting library I'd never used before, Altair. It worked pretty great! I'd say it was easier to get going with than matplotlib or seaborn (two other graphical plotting packages for python).
 * how the operating system page cache works (not at a very detailed level, but much more than I knew before this project.)
-* divide and conquer is an effective strategy for implementing parallelism while avoiding most of the headaches involved with properly implementing concurrency mechanisms.
+* divide and conquer is an effective strategy for implementing parallelism while avoiding most of the headaches involved with properly implementing concurrency mechanisms like locks, and even in those cases, locks can add confidence that the implementation is thread safe
+* what data races are, how they occur, and how to use concurrency mechanisms to avoid them- in particular, I wasn't aware how much re-arranging the OS can do for instruction execution.
+* modeling/implementing out-of-core (external) sorting algorithms
+* that memory mapping exists, and how it works
