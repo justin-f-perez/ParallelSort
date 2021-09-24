@@ -1,3 +1,5 @@
+// Author: Justin Perez
+
 package hw1;
 
 import java.io.DataOutputStream;
