@@ -1,10 +1,13 @@
 # Mobile Computing HW1: ParallelSort
 ## Quick start
+### Discussion (and python notebook)
+Charts are implemented in a python notebook that automatically runs the sorting algorithm on all the required lenghts of input and # of threads. You should be able to just run [setup.sh](discussion/setup.sh) to create the virtual environment and install dependencies, then start the notebook server with [start.sh](discussion/start.sh). This should start the jupyter lab server and open it in your browser.
+
+For collaborative editing, there's a markdown document that we can convert to a PDF/doc/whatever later [discussion/discussion.md](discussion/discussion.md)
+
 ### Java
 You can load this project in intellij to compile the java classes. Please don't commit your compiled output. There's an entrypoint in the ParallelExternalSorter class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code.
 
-### Python Notebook
-Make sure you've already built the Java project and then follow [this README](discussion/README.md).
 
 ## Contributing
 ### tips
