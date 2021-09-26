@@ -7,7 +7,7 @@ set -o pipefail  # fail/exit if a pipeline fails
 #set -x           # print commands to stdout as they run  
 
 
-cd `dirname $0`  # change into the directory of this script just incase it was invoked from outside of it
+cd $(dirname "$0")  # change into the directory of this script just incase it was invoked from outside of it
 echo "working directory: `pwd`"
 echo "Creating a python virtual environment to install dependencies into..."
 python3 -m venv .venv

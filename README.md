@@ -4,9 +4,15 @@
 You can load this project in intellij to compile the java classes. Please don't commit your compiled output. There's an entrypoint in the ParallelExternalSorter class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code.
 
 ### Discussion (and python notebook)
+
 Charts are implemented in a python notebook that automatically runs the sorting algorithm on all the required lenghts of input and # of threads. (Don't forget to build the java project first.) You should be able to just run [setup.sh](discussion/setup.sh) to create the virtual environment and install dependencies, then start the notebook server with [start.sh](discussion/start.sh). This should start the jupyter lab server and open it in your browser.
 
 For collaborative editing, there's a markdown document that we can convert to a PDF/doc/whatever later [discussion/discussion.md](discussion/discussion.md)
+
+#### Using Docker
+1. run `docker-compose up --build` in this directory
+2. you should see docker compose building the Dockerfile in this directory
+3. when it's done it'll print some links to the terminal, open the one with '127.0.0.1' in your browser
 
 
 ## Contributing
