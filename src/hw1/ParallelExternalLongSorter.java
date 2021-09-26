@@ -299,7 +299,17 @@ public class ParallelExternalLongSorter {
     //endregion
 
     //region chunk sort
-    private record ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split) implements Callable<Void> {
+    private static final class ChunkSorter implements Callable<Void> {
+        private final FileChannel inputFileChannel;
+        private final FileChannel scratchFileChannel;
+        private final Split split;
+
+        private ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split) {
+            this.inputFileChannel = inputFileChannel;
+            this.scratchFileChannel = scratchFileChannel;
+            this.split = split;
+        }
+
         @Override
         public Void call() throws Exception {
             var input = inputFileChannel.map(READ_ONLY, split.bytePosition, split.byteSize).asLongBuffer();
@@ -316,6 +326,42 @@ public class ParallelExternalLongSorter {
             scratch.reset();
             return null;
         }
+
+        public FileChannel inputFileChannel() {
+            return inputFileChannel;
+        }
+
+        public FileChannel scratchFileChannel() {
+            return scratchFileChannel;
+        }
+
+        public Split split() {
+            return split;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) return true;
+            if (obj == null || obj.getClass() != this.getClass()) return false;
+            var that = (ChunkSorter) obj;
+            return Objects.equals(this.inputFileChannel, that.inputFileChannel) &&
+                    Objects.equals(this.scratchFileChannel, that.scratchFileChannel) &&
+                    Objects.equals(this.split, that.split);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(inputFileChannel, scratchFileChannel, split);
+        }
+
+        @Override
+        public String toString() {
+            return "ChunkSorter[" +
+                    "inputFileChannel=" + inputFileChannel + ", " +
+                    "scratchFileChannel=" + scratchFileChannel + ", " +
+                    "split=" + split + ']';
+        }
+
     }
     //endregion
 }
