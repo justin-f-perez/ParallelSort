@@ -31,7 +31,7 @@ public class ParallelExternalLongSorter {
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
     static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
-    private static final int BASE_CHUNK_MULTIPLER = 1;
+    private static final int BASE_CHUNK_MULTIPLIER = 1;
     //endregion
 
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
@@ -84,13 +84,14 @@ public class ParallelExternalLongSorter {
             debug("these sheets are so soft! just look at that thread count: " + nThreads);
             debug("is this expired? its getting chunky (queueing chunk sort jobs)");
             ExecutorService executor = Executors.newFixedThreadPool(nThreads);
-            executor.invokeAll(List.of(chunkSorters));
+            var futures = executor.invokeAll(List.of(chunkSorters));
             debug("YOU'RE GONNA BE FRIENDS WHETHER YOU LIKE IT OR NOT! (joining threads)");
             executor.shutdown();  //tell the pool we're done giving it work
             debug("GET TO THE CHOPPA! (awaiting threadpool termination)");
             // blocks until all tasks complete
             boolean timedOut = !executor.awaitTermination(THREADPOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (timedOut) throw new RuntimeException("threadpool timed out");
+            for (var future: futures) future.get(); // propagate exceptions from child threads
             //endregion
 
             //region lock files, make scratch file chunks
@@ -209,12 +210,12 @@ public class ParallelExternalLongSorter {
         //      until the entire input is sorted
         //      ... so if the answer is "yes", we should initialize chunkMultiplier to a higher value
         long workingMemoryLimit = getWorkingMemoryLimit(), expectedPeakMemoryUse;
-        int count, chunkMultiplier = BASE_CHUNK_MULTIPLER - 1;
+        int count, chunkMultiplier = BASE_CHUNK_MULTIPLIER - 1;
 
         do {
             chunkMultiplier = chunkMultiplier + 1;
             count = nThreads * chunkMultiplier;
-            expectedPeakMemoryUse = inputByteSize / count;
+            expectedPeakMemoryUse = (inputByteSize / count) * nThreads;
         } while (expectedPeakMemoryUse > workingMemoryLimit && 60000 >= count && count >= 0);
 
         if (count > 60000) {
@@ -225,6 +226,8 @@ public class ParallelExternalLongSorter {
 
         assert count > 0 : "integer overflow occurred while trying to get chunk count";
         debug("Count Chunkula: " + count);
+        var MB = Math.pow(10,6);
+        debug("peak chonk (nThreads * MB / # of chunks): " + expectedPeakMemoryUse/MB);
         return count;
     }
     //endregion
@@ -238,11 +241,11 @@ public class ParallelExternalLongSorter {
         //      looks like there's a 1MB overhead just for creating a thread
         //      https://dzone.com/articles/how-much-memory-does-a-java-thread-take
         // naive implementation - save some space just in case
-        final long overhead = 128 * MB;
-        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1GB"
+        final long overhead = 256 * MB;
+        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1 GB"
         //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
         var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
-        debug("pepperidge farm remembers (MB): " + (workingMemoryLimit / MB));
+        debug("Pepperidge Farm remembers (MB): " + (workingMemoryLimit / MB));
         return workingMemoryLimit;
     }
     //endregion
@@ -299,6 +302,7 @@ public class ParallelExternalLongSorter {
     //endregion
 
     //region chunk sort
+    @SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
     private static final class ChunkSorter implements Callable<Void> {
         private final FileChannel inputFileChannel;
         private final FileChannel scratchFileChannel;
@@ -325,18 +329,6 @@ public class ParallelExternalLongSorter {
             debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
             scratch.reset();
             return null;
-        }
-
-        public FileChannel inputFileChannel() {
-            return inputFileChannel;
-        }
-
-        public FileChannel scratchFileChannel() {
-            return scratchFileChannel;
-        }
-
-        public Split split() {
-            return split;
         }
 
         @Override
