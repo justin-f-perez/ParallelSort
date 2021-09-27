@@ -30,7 +30,7 @@ public class ParallelExternalLongSorter {
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
-    static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
+    static final int DEFAULT_NTHREADS = 12;
     private static final int BASE_CHUNK_MULTIPLIER = 1;
     //endregion
 
@@ -59,6 +59,12 @@ public class ParallelExternalLongSorter {
             outputFileChannel.truncate(inputSize);
             //endregion
 
+            if (nThreads == 12) {
+                ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
+                chunkSorter.call();
+                return;
+            }
+
             //region plan where to split the input file
             debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             int chunkCount = getChunkCount(nThreads, inputSize);
@@ -71,6 +77,7 @@ public class ParallelExternalLongSorter {
                 var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
                 chunkSorters[i] = chunkSorter;
             }
+
             //endregion
             //region create a pool to manage threads, give it tasks (chunk sorter), then wait for it to finish executing them all
             debug("these sheets are so soft! just look at that thread count: " + nThreads);
@@ -312,7 +319,7 @@ public class ParallelExternalLongSorter {
             scratch.mark();
             long[] tmp = new long[input.remaining()];
             input.get(tmp);
-            Arrays.sort(tmp);
+            Arrays.parallelSort(tmp);
             scratch.put(tmp);
             debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
             scratch.reset();
