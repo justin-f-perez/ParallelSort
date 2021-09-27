@@ -27,6 +27,11 @@ public class DataFilePrinter {
             }
             System.out.println("End of file.");
         }
+        System.out.println("sorted.bin");
+        try (DataInputStream dis = new DataInputStream(new FileInputStream("sorted.bin"))) {
+            while (dis.available() > 0) System.out.println(dis.readLong());
+        }
+        System.out.println("End of file.");
         System.out.println("Finished printing all files.");
     }
 }

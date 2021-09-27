@@ -18,11 +18,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 
 import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 import static java.nio.file.StandardOpenOption.*;
 //endregion
+
+
 
 public class ParallelExternalLongSorter {
 
@@ -31,8 +35,72 @@ public class ParallelExternalLongSorter {
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
     static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
+    //static final int DEFAULT_NTHREADS = 1;
     private static final int BASE_CHUNK_MULTIPLER = 1;
+    private CyclicBarrier barrier;
     //endregion
+
+    private class MergeSorter extends Thread{
+
+        private int threadID;
+        private CyclicBarrier barrier;
+        private long array[];
+        private long aux[];
+        private int numberOfThreads;
+
+        public MergeSorter(int threadID, CyclicBarrier barrier, long array[], long aux[]) {
+            super("thread " + threadID);
+            this.threadID = threadID;
+            this.barrier = barrier;
+            this.array = array;
+            this.aux = aux;
+        }
+
+        public void run() {
+
+         try   {
+                int threadID = 0;
+                int blockSize = array.length / DEFAULT_NTHREADS;
+                int first = threadID * blockSize;
+                int last = first + blockSize;
+                if (threadID == DEFAULT_NTHREADS - 1)
+                    last = array.length;
+                int numberOfBlocks = DEFAULT_NTHREADS;
+                int activeThreads = numberOfBlocks / 2;
+                while (activeThreads > 0) {
+                    if (threadID < activeThreads) {
+                        int start = 2 * threadID * blockSize;
+                        int second = start + blockSize;
+                        int third = second + blockSize;
+                        // if there are even number of blocks,
+                        // only then the last block is merged
+                        if (numberOfBlocks % 2 == 0 && threadID == activeThreads - 1)
+                            third = array.length;
+                        mergeSort(array, aux, start, second, third);
+                    }
+                    blockSize *= 2;
+                    // numberOfBlocks ceiled up, since if there are odd numberOfBlocks,
+                    // all consecutive block pairs are merged, but the last one is not merged
+                    // if there are 7 blocks to merge, 6 of them are merged into 3.
+                    // last one stayed the same. So in the next iteration, we have (3+1=4) blocks.
+                    numberOfBlocks = (int) Math.ceil(numberOfBlocks / 2.0);
+
+                    // activeThreads must be calculated by dividing numberOfBlocks by 2,
+                    // not dividing activeThreads by 2.
+                    activeThreads = numberOfBlocks / 2;
+                    barrier.await();
+                }
+            } catch (InterruptedException ex) {
+                System.out.println("exception error message: " + ex.getMessage());
+                ex.printStackTrace();
+            } catch (BrokenBarrierException ex) {
+                System.out.println("exception error message: " + ex.getMessage());
+                ex.printStackTrace();
+            }
+
+        }
+
+    }
 
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
         //region pre-condition verification (and delete old output)
@@ -79,6 +147,7 @@ public class ParallelExternalLongSorter {
                 var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
                 chunkSorters[i] = chunkSorter;
             }
+
             //endregion
             //region create a pool to manage threads, give it tasks (chunk sorter), then wait for it to finish executing them all
             debug("these sheets are so soft! just look at that thread count: " + nThreads);
@@ -253,8 +322,65 @@ public class ParallelExternalLongSorter {
     }
     //endregion
 
+    public static void mergeSort(long d1[], long aux[], int start1, int start2, int last){
+        int index1 = start1;
+        int index2 = start2;
+        int index3 = start1;
+        while(index1<start2 && index2<last){
+            if(d1[index1] < d1[index2]){
+                aux[index3] = d1[index1];
+                index1++;
+                index3++;
+            }else{
+                aux[index3] = d1[index2];
+                index2++;
+                index3++;
+            }
+        }
+
+        // if there are some elements left in the first sorted subarray,
+        // copy them to auxiliary array
+        while(index1<start2){
+            aux[index3++] = d1[index1++];
+        }
+
+        // if there are some elements left in the second sorted subarray,
+        // copy them to auxiliary array
+        while(index2<last){
+            aux[index3++] = d1[index2++];
+        }
+
+        //copy back from the auxiliary array to the original data array
+        System.arraycopy(aux, start1, d1, start1, last-start1);
+    }
+
     // TODO: too slow
     private void merge(LongBuffer[] presortedChunks, LongBuffer output) {
+
+
+
+        CyclicBarrier barrier = new CyclicBarrier(DEFAULT_NTHREADS);
+
+        MergeSorter threads[] = new MergeSorter[DEFAULT_NTHREADS];
+        for (int i = 0; i < threads.length; i++) {
+            long[] tmp = new long[presortedChunks[i].remaining()];
+            long aux[] = new long[tmp.length];
+            threads[i] = new MergeSorter(i, barrier, tmp, aux);
+            threads[i].start();
+        }
+
+        // main thread waits for the first thread to finish.
+        // it could have waited any other thread. all finish simultaneously
+        try {
+            threads[0].join();
+        }catch(InterruptedException ie) {
+            ie.printStackTrace();
+        }
+
+
+
+    }
+    private void merge2(LongBuffer[] presortedChunks, LongBuffer output) {
         //region precondition verification
         debug("applying coconut oil (verifying merge preconditions)");
         // check preconditions
@@ -272,20 +398,35 @@ public class ParallelExternalLongSorter {
         //endregion
 
         //region implementation
-        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
-        // initially populate the heap with any non-empty chunk
-        for (var chunk : presortedChunks) {
-            if (chunk.hasRemaining()) minHeap.add(chunk);
-        }
-        LongBuffer chunkWithSmallestValue = minHeap.poll();
-        while (chunkWithSmallestValue != null) {
-            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
-            if (chunkWithSmallestValue.hasRemaining()) {
-                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
-            }
-            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
-        }
+//        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
+//        // initially populate the heap with any non-empty chunk
+//        for (var chunk : presortedChunks) {
+//            if (chunk.hasRemaining()) minHeap.add(chunk);
+//        }
+//        LongBuffer chunkWithSmallestValue = minHeap.poll();
+//        while (chunkWithSmallestValue != null) {
+//            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
+//            if (chunkWithSmallestValue.hasRemaining()) {
+//                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
+//            }
+//            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
+//        }
         //endregion
+        Arrays.parallelSort(presortedChunks);
+        for (int i = 0; i < presortedChunks.length; i++) {
+////            debug("chunk 0");
+////            debug(presortedChunks[i].get());
+////            presortedChunks[i].rewind();
+//            long[] tmp = new long[presortedChunks[i].remaining()];
+//            presortedChunks[i].get(tmp);
+//            Arrays.parallelSort(tmp);
+            output.put(presortedChunks[i]);
+        }
+//        for (int i = 0; i < presortedChunks.length; i++) {
+//            output.put(presortedChunks[i]);
+//        }
+
+
 
         //region post-condition verification
         assert output.position() == output.limit() : "expected output buffer's position to be at limit"; // output is full
