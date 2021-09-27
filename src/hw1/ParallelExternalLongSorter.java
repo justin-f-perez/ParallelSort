@@ -30,13 +30,17 @@ import static java.nio.file.StandardOpenOption.*;
 
 @SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
 class ParallelExternalLongSorter {
-    //region constants
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
+    //region constants
+    // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
+    //      having more or fewer threads reduced required overhead
+    //      (required overhead=minimum to not throw an OOM heap error)
+    private static final long MEMORY_OVERHEAD = 140 * MB;
     private static final int BASE_CHUNK_MULTIPLIER = 1;
+    private static final Logger LOGGER = Logger.getLogger(ParallelExternalLongSorter.class.getName());
     private final Path inputPath;
     private final Path outputPath;
     private final int nThreads;
-    private static final Logger LOGGER = Logger.getLogger(ParallelExternalLongSorter.class.getName());
     //endregion
 
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) {
@@ -76,7 +80,9 @@ class ParallelExternalLongSorter {
 
             //region plan where to split the input file
             LOGGER.info("can longs get covid? better put them in pods just to be safe (preparing chunks)");
-            int chunkCount = getChunkCount(nThreads, inputSize);
+            var maxMem = getMaximumTotalChunkMemory(MEMORY_OVERHEAD, 0, 0);
+            int chunkCount = getChunkCount(nThreads, inputSize, maxMem);
+            LOGGER.info("Count Chunkula: " + chunkCount);
             Split[] splits = Split.createSplits(inputSize, chunkCount);
             //endregion
             //region split it up (logically) by telling chunk sorters where they're going to sort
@@ -125,66 +131,9 @@ class ParallelExternalLongSorter {
     }
 
     //region chunk count (how many splits/chunks should we make?)
-    /*
-    Returns the number of chunks that the input file should be split into.
-    Considerations for the choice of count:
-    (1) We have up to N `ChunkSorter`s each holding inputSize / chunkCount bytes in physical memory concurrently
-    during the first pass
-    (2) During the second pass, we should implement some data structure for efficiently
-    taking the minimum value among the heads of the chunks (e.g., a min heap) - this also needs to be held in memory,
-    but only after the first pass is complete
-    (3) more chunks means we'll be doing more seeking within the file; the OS should be able to efficiently swap pages
-    in and out of cache because we're using memory mapped IO and accessing each chunk sequentially, but for a
-    ridiculously large number of chunks we won't have sufficient physical memory to hold the head of each chunk in
-    cache concurrently. This would result in a lot of swapping between physical memory and disk
-    (4) assuming the input is sufficiently large, chunk count should be >= parallelism
-     */
-    private int getChunkCount(int nThreads, long inputByteSize) {
-        // TODO: is it always more efficient to initialize count to some multiple of parallelism?
-        //      it could be the case that some chunks, by chance, happen to sort more quickly than others
-        //      thus, it would be beneficial to have more (smaller) chunks so that all threads can stay busy
-        //      until the entire input is sorted
-        //      ... so if the answer is "yes", we should initialize chunkMultiplier to a higher value
-        long workingMemoryLimit = getWorkingMemoryLimit(), expectedPeakMemoryUse;
-        int count, chunkMultiplier = BASE_CHUNK_MULTIPLIER - 1;
 
-        do {
-            chunkMultiplier = chunkMultiplier + 1;
-            count = nThreads * chunkMultiplier;
-            expectedPeakMemoryUse = (inputByteSize / count) * nThreads;
-        } while (expectedPeakMemoryUse > workingMemoryLimit && 60000 >= count && count >= 0);
-
-        if (count > 60000) {
-            // on most systems Java will choke if you try to do ~64k+ mmaps
-            // src: https://mapdb.org/blog/mmap_files_alloc_and_jvm_crash/
-            throw new RuntimeException("Aborting: Attempted to allocate too many chunks");
-        }
-
-        assert count > 0 : "integer overflow occurred while trying to get chunk count";
-        LOGGER.info("Count Chunkula: " + count);
-        var MB = Math.pow(10, 6);
-        LOGGER.info("peak chonk (nThreads * MB / # of chunks): " + expectedPeakMemoryUse / MB);
-        return count;
-    }
     //endregion
 
-    //region chunk sizing helper (how much room we have for in-memory sorting)
-    private long getWorkingMemoryLimit() {
-        // final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
-        final long MB = (long) Math.pow(10, 6); // Megabyte (SI unit)
-
-        // save some space on the heap for overhead
-        // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
-        //      having more or fewer threads reduced required overhead
-        //      (required overhead=minimum to not throw an OOM heap error)
-        final long overhead = 140 * MB;
-        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1 GB"
-        //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
-        var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
-        LOGGER.info("Pepperidge Farm remembers (MB): " + (workingMemoryLimit / MB));
-        return workingMemoryLimit;
-    }
-    //endregion
 
     // TODO: too slow
     private void merge(LongBuffer[] presortedChunks, LongBuffer output) {

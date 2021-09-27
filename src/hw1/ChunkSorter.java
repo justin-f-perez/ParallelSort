@@ -12,14 +12,14 @@ import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 
 @SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
 class ChunkSorter implements Callable<Void> {
-    private final FileChannel inputFileChannel;
-    private final FileChannel scratchFileChannel;
-    private final Split split;
     private static final Logger LOGGER = Logger.getLogger(CommandLineInterface.class.getName());
+    private final FileChannel inputFileChannel;
+    private final FileChannel outputFileChannel;
+    private final Split split;
 
-    public ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split) {
+    public ChunkSorter(FileChannel inputFileChannel, FileChannel outputFileChannel, Split split) {
         this.inputFileChannel = inputFileChannel;
-        this.scratchFileChannel = scratchFileChannel;
+        this.outputFileChannel = outputFileChannel;
         this.split = split;
     }
 
@@ -31,17 +31,17 @@ class ChunkSorter implements Callable<Void> {
 
     private void sort() throws IOException {
         var input = inputFileChannel.map(READ_ONLY, split.bytePosition, split.byteSize).asLongBuffer();
-        var scratch = scratchFileChannel.map(READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
-        assert input.position() == scratch.position() : "expected chunk in/out to have same position";
-        assert input.limit() == scratch.limit() : "expected chunk in/out to have same limit";
+        var output = outputFileChannel.map(READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
+        assert input.position() == output.position() : "expected chunk in/out to have same position";
+        assert input.limit() == output.limit() : "expected chunk in/out to have same limit";
         LOGGER.info("preparing outdated VCR references (sorting chunk)");
-        scratch.mark();
+        output.mark();
         long[] tmp = new long[input.remaining()];
         input.get(tmp);
         Arrays.sort(tmp);
-        scratch.put(tmp);
+        output.put(tmp);
         LOGGER.info("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
-        scratch.reset();
+        output.reset();
     }
 
     @Override
@@ -50,20 +50,20 @@ class ChunkSorter implements Callable<Void> {
         if (obj == null || obj.getClass() != this.getClass()) return false;
         var that = (ChunkSorter) obj;
         return Objects.equals(this.inputFileChannel, that.inputFileChannel) &&
-                Objects.equals(this.scratchFileChannel, that.scratchFileChannel) &&
+                Objects.equals(this.outputFileChannel, that.outputFileChannel) &&
                 Objects.equals(this.split, that.split);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(inputFileChannel, scratchFileChannel, split);
+        return Objects.hash(inputFileChannel, outputFileChannel, split);
     }
 
     @Override
     public String toString() {
         return "ChunkSorter[" +
                 "inputFileChannel=" + inputFileChannel + ", " +
-                "scratchFileChannel=" + scratchFileChannel + ", " +
+                "scratchFileChannel=" + outputFileChannel + ", " +
                 "split=" + split + ']';
     }
 }
