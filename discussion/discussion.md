@@ -70,14 +70,18 @@ For the first approach, I'd rewrite in a higher level language so I can iterate 
 
 It could be useful to explore alternative models for "chunking". For example, we might see some improvements in I/O (in terms of page cache hits/misses) if we align chunks to page boundaries. It would also be a good idea to experiment with chunk size and ordering. For example, what if we use a task queue instead of a task pool? What's the optimal "chunk size" for balancing work between the threads (e.g., if we just have as many chunks as we do cores and one thread completes early, it can't "help" the other threads complete their chunk.)
 
-Implementing a counting sort like bucket sort could improve parallelism 
+Implementing a counting sort like bucket sort could improve parallelism
+
+So far, the main bottleneck is the merging of the chunks of data at the end. This is single threaded and there is a lot of cpu overhead in pushing and popping the heap. I am still working on a better solution for this. If I had to redo this, I would write a recursive function to sort the chunks, instead of sorting them seperately and combining them at the end.
 
 5. Briefly state how much time you spent on the assignment and what you have learned.
+
+Justin:
 
 I've put around 80 hours into this project because so far I'm the only one contributing to the repository.
 * 20-25 hours: understanding the problem, asking clarifying questions, learning Java, setting up my dev environment, small practice programs, and feeling out the Java ecosystem
 * 20-25 hours: writing and debugging my first attempt at an implementation using a recursive version of this algorithm using a ForkJoinPool (it wasn't really clear to me whether the "parallelism" parameter strictly controlled the number of threads or not, so I abandoned this strategy).
-* a few hours of pure group overhead. We exchanged GitHub usernames, I created a repo Sat Sep 18 and met with the group and took the time to explain what I'd come up with so far... I haven't seen a single line of code- I'm the only committer among all branches in the repository. (If you're reading this and you've contributed anything, please remove this line...)
+* a few hours of pure group overhead. We exchanged GitHub usernames.
 * 30-35 hours: writing a non-recursive version of the algorithm, testing, debugging, writing the python notebook for plotting the charts, this discussion document, etc.
 
 I've learned:
@@ -89,3 +93,16 @@ I've learned:
 * what data races are, how they occur, and how to use concurrency mechanisms to avoid them- in particular, I wasn't aware how much re-arranging the OS can do for instruction execution.
 * modeling/implementing out-of-core (external) sorting algorithms
 * that memory mapping exists, and how it works
+
+Rahsin:
+
+I've put around 20 hours so far into this project. Most of it was over the last weekend.
+* 5-6 hours: Studying Java because I haven't used it in a long time and there was a lot to learn.
+* 5-6 hours: Understanding Justin's existing implementation and how everything works together. 
+* 5-6 hours: Trying to make the final merge parallel or at least more efficient. All my attempts slower than just running Arrays.parallelSort on the whole thing.
+* 1-2 hours: Implementing an alternative argument to just run Arrays.parallelSort on the whole chunk instead of breaking up and merging the main file.
+
+I've learned:
+* Java. I haven't used it in 5 years. I've been spoiled from mostly coding in Javascript and Python in the past few years.
+* Java's in built functions are pretty efficient and if this was not an assignment I would just use them isntead.
+* Concurrency and how much I would rather not have to directly deal with it.
