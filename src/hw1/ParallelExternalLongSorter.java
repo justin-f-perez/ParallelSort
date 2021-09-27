@@ -30,7 +30,7 @@ public class ParallelExternalLongSorter {
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
-    static final int DEFAULT_NTHREADS = 12;
+    static final int DEFAULT_NTHREADS = 1;
     private static final int BASE_CHUNK_MULTIPLIER = 1;
     //endregion
 
@@ -59,7 +59,7 @@ public class ParallelExternalLongSorter {
             outputFileChannel.truncate(inputSize);
             //endregion
 
-            if (nThreads == 12) {
+            if (nThreads >= 0) {
                 ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
                 chunkSorter.call();
                 return;
@@ -319,7 +319,12 @@ public class ParallelExternalLongSorter {
             scratch.mark();
             long[] tmp = new long[input.remaining()];
             input.get(tmp);
-            Arrays.parallelSort(tmp);
+            if (DEFAULT_NTHREADS == 1) {
+                Arrays.sort(tmp);
+            }
+            else {
+                Arrays.parallelSort(tmp);
+            }
             scratch.put(tmp);
             debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
             scratch.reset();
