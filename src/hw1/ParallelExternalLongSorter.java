@@ -59,14 +59,6 @@ public class ParallelExternalLongSorter {
             outputFileChannel.truncate(inputSize);
             //endregion
 
-            //region special case for T=1 (sort directly into the output file)
-            var didShortcut = tryShortcut(nThreads, inputFileChannel, outputFileChannel);
-            if (didShortcut) {
-                debug("2ez, im going home early");
-                return;
-            }
-            //endregion
-
             //region plan where to split the input file
             debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             int chunkCount = getChunkCount(nThreads, inputSize);
@@ -112,15 +104,6 @@ public class ParallelExternalLongSorter {
             debug("doing the world a favor and ending another java process (all done)");
             //endregion
         }
-    }
-
-    private boolean tryShortcut(int nThreads, FileChannel inputFileChannel, FileChannel outputFileChannel) throws Exception {
-        if (nThreads == 1) {
-            ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
-            chunkSorter.call();
-            return true;
-        }
-        return false;
     }
 
     //region debug utils
@@ -237,11 +220,11 @@ public class ParallelExternalLongSorter {
         // final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
         final long MB = (long) Math.pow(10, 6); // Megabyte (SI unit)
 
-        // TODO: do some profiling to figure out how much overhead there really is
-        //      looks like there's a 1MB overhead just for creating a thread
-        //      https://dzone.com/articles/how-much-memory-does-a-java-thread-take
-        // naive implementation - save some space just in case
-        final long overhead = 256 * MB;
+        // save some space on the heap for overhead
+        // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
+        //      having more or fewer threads reduced required overhead
+        //      (required overhead=minimum to not throw an OOM heap error)
+        final long overhead = 140 * MB;
         //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1 GB"
         //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
         var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
