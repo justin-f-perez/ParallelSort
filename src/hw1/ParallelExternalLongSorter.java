@@ -113,6 +113,7 @@ public class ParallelExternalLongSorter {
 
     public static void main(String[] args) throws Exception {
         //region arg parsing
+        long start = System.currentTimeMillis();
         debug(args);
         String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
         String outputFileName = (args.length < 2) ? DEFAULT_OUTPUT_FILENAME : args[1];
@@ -148,6 +149,10 @@ public class ParallelExternalLongSorter {
             assert isEmpty(in) == isEmpty(out) : "expected output to be all 0's only if input is all 0's";
         }
         //endregion
+
+        long stop = System.currentTimeMillis();
+
+        System.out.printf("Total execution time: %d ms%n", stop - start);
     }
 
     //region verification utils
