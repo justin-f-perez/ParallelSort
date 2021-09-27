@@ -30,11 +30,12 @@ public class ParallelExternalLongSorter {
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
-    static final int DEFAULT_NTHREADS = 1;
+    static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
     private static final int BASE_CHUNK_MULTIPLIER = 1;
+    static final String DEFAULT_SORTING_METHOD = "chunk";
     //endregion
 
-    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
+    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads, String sortingMethod) throws Exception {
         //region pre-condition verification (and delete old output)
         debug("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
         assert nThreads >= 1 : "must have at least 1 thread, not " + nThreads;
@@ -59,8 +60,9 @@ public class ParallelExternalLongSorter {
             outputFileChannel.truncate(inputSize);
             //endregion
 
-            if (nThreads >= 0) {
-                ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
+            // run Arrays.parallelSort on whole file
+            if (sortingMethod == "parallel" && nThreads > 1) {
+                ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES), sortingMethod);
                 chunkSorter.call();
                 return;
             }
@@ -74,7 +76,7 @@ public class ParallelExternalLongSorter {
             ChunkSorter[] chunkSorters = new ChunkSorter[chunkCount];
             for (int i = 0; i < splits.length; i++) {
                 var split = splits[i];
-                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
+                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split, sortingMethod);
                 chunkSorters[i] = chunkSorter;
             }
 
@@ -125,6 +127,7 @@ public class ParallelExternalLongSorter {
         String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
         String outputFileName = (args.length < 2) ? DEFAULT_OUTPUT_FILENAME : args[1];
         final int nThreads = (args.length < 3) ? DEFAULT_NTHREADS : Integer.parseInt(args[2]);
+        String sortingMethod = (args.length < 4) ? DEFAULT_SORTING_METHOD : args[3];
         final Path inputPath = Paths.get(inputFileName).toAbsolutePath();
         final Path outputPath = Paths.get(outputFileName).toAbsolutePath();
         debug("you put your long ints in " + inputPath);
@@ -144,7 +147,7 @@ public class ParallelExternalLongSorter {
         }
         //endregion
 
-        new ParallelExternalLongSorter(inputPath, outputPath, nThreads);
+        new ParallelExternalLongSorter(inputPath, outputPath, nThreads, DEFAULT_SORTING_METHOD);
         //region post-condition verification
         try (
                 FileChannel inFC = FileChannel.open(inputPath, Set.of(READ));
@@ -302,11 +305,13 @@ public class ParallelExternalLongSorter {
         private final FileChannel inputFileChannel;
         private final FileChannel scratchFileChannel;
         private final Split split;
+        private final String sortingMethod;
 
-        private ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split) {
+        private ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split, String sortingMethod) {
             this.inputFileChannel = inputFileChannel;
             this.scratchFileChannel = scratchFileChannel;
             this.split = split;
+            this.sortingMethod = sortingMethod;
         }
 
         @Override
@@ -319,11 +324,11 @@ public class ParallelExternalLongSorter {
             scratch.mark();
             long[] tmp = new long[input.remaining()];
             input.get(tmp);
-            if (DEFAULT_NTHREADS == 1) {
-                Arrays.sort(tmp);
+            if (sortingMethod == "parallel" ) {
+                Arrays.parallelSort(tmp);
             }
             else {
-                Arrays.parallelSort(tmp);
+                Arrays.sort(tmp);
             }
             scratch.put(tmp);
             debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
