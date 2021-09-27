@@ -31,7 +31,7 @@ public class ParallelExternalLongSorter {
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
     static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
     static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
-    private static final int BASE_CHUNK_MULTIPLER = 1;
+    private static final int BASE_CHUNK_MULTIPLIER = 1;
     //endregion
 
     public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws Exception {
@@ -59,14 +59,6 @@ public class ParallelExternalLongSorter {
             outputFileChannel.truncate(inputSize);
             //endregion
 
-            //region special case for T=1 (sort directly into the output file)
-            var didShortcut = tryShortcut(nThreads, inputFileChannel, outputFileChannel);
-            if (didShortcut) {
-                debug("2ez, im going home early");
-                return;
-            }
-            //endregion
-
             //region plan where to split the input file
             debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             int chunkCount = getChunkCount(nThreads, inputSize);
@@ -84,13 +76,14 @@ public class ParallelExternalLongSorter {
             debug("these sheets are so soft! just look at that thread count: " + nThreads);
             debug("is this expired? its getting chunky (queueing chunk sort jobs)");
             ExecutorService executor = Executors.newFixedThreadPool(nThreads);
-            executor.invokeAll(List.of(chunkSorters));
+            var futures = executor.invokeAll(List.of(chunkSorters));
             debug("YOU'RE GONNA BE FRIENDS WHETHER YOU LIKE IT OR NOT! (joining threads)");
             executor.shutdown();  //tell the pool we're done giving it work
             debug("GET TO THE CHOPPA! (awaiting threadpool termination)");
             // blocks until all tasks complete
             boolean timedOut = !executor.awaitTermination(THREADPOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (timedOut) throw new RuntimeException("threadpool timed out");
+            for (var future: futures) future.get(); // propagate exceptions from child threads
             //endregion
 
             //region lock files, make scratch file chunks
@@ -111,15 +104,6 @@ public class ParallelExternalLongSorter {
             debug("doing the world a favor and ending another java process (all done)");
             //endregion
         }
-    }
-
-    private boolean tryShortcut(int nThreads, FileChannel inputFileChannel, FileChannel outputFileChannel) throws Exception {
-        if (nThreads == 1) {
-            ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES));
-            chunkSorter.call();
-            return true;
-        }
-        return false;
     }
 
     //region debug utils
@@ -209,12 +193,12 @@ public class ParallelExternalLongSorter {
         //      until the entire input is sorted
         //      ... so if the answer is "yes", we should initialize chunkMultiplier to a higher value
         long workingMemoryLimit = getWorkingMemoryLimit(), expectedPeakMemoryUse;
-        int count, chunkMultiplier = BASE_CHUNK_MULTIPLER - 1;
+        int count, chunkMultiplier = BASE_CHUNK_MULTIPLIER - 1;
 
         do {
             chunkMultiplier = chunkMultiplier + 1;
             count = nThreads * chunkMultiplier;
-            expectedPeakMemoryUse = inputByteSize / count;
+            expectedPeakMemoryUse = (inputByteSize / count) * nThreads;
         } while (expectedPeakMemoryUse > workingMemoryLimit && 60000 >= count && count >= 0);
 
         if (count > 60000) {
@@ -225,6 +209,8 @@ public class ParallelExternalLongSorter {
 
         assert count > 0 : "integer overflow occurred while trying to get chunk count";
         debug("Count Chunkula: " + count);
+        var MB = Math.pow(10,6);
+        debug("peak chonk (nThreads * MB / # of chunks): " + expectedPeakMemoryUse/MB);
         return count;
     }
     //endregion
@@ -234,15 +220,15 @@ public class ParallelExternalLongSorter {
         // final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
         final long MB = (long) Math.pow(10, 6); // Megabyte (SI unit)
 
-        // TODO: do some profiling to figure out how much overhead there really is
-        //      looks like there's a 1MB overhead just for creating a thread
-        //      https://dzone.com/articles/how-much-memory-does-a-java-thread-take
-        // naive implementation - save some space just in case
-        final long overhead = 128 * MB;
-        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1GB"
+        // save some space on the heap for overhead
+        // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
+        //      having more or fewer threads reduced required overhead
+        //      (required overhead=minimum to not throw an OOM heap error)
+        final long overhead = 140 * MB;
+        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1 GB"
         //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
         var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
-        debug("pepperidge farm remembers (MB): " + (workingMemoryLimit / MB));
+        debug("Pepperidge Farm remembers (MB): " + (workingMemoryLimit / MB));
         return workingMemoryLimit;
     }
     //endregion
@@ -299,6 +285,7 @@ public class ParallelExternalLongSorter {
     //endregion
 
     //region chunk sort
+    @SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
     private static final class ChunkSorter implements Callable<Void> {
         private final FileChannel inputFileChannel;
         private final FileChannel scratchFileChannel;
@@ -325,18 +312,6 @@ public class ParallelExternalLongSorter {
             debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
             scratch.reset();
             return null;
-        }
-
-        public FileChannel inputFileChannel() {
-            return inputFileChannel;
-        }
-
-        public FileChannel scratchFileChannel() {
-            return scratchFileChannel;
-        }
-
-        public Split split() {
-            return split;
         }
 
         @Override
