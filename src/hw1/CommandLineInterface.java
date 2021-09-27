@@ -47,6 +47,7 @@ public class CommandLineInterface {
 
         var sorter = new ParallelExternalLongSorter(inputPath, outputPath, nThreads);
         sorter.sort();
+
         //region post-condition verification
         try (
                 FileChannel inFC = FileChannel.open(inputPath, Set.of(READ));
