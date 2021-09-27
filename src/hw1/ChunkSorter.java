@@ -1,5 +1,6 @@
 package hw1;
 
+import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.Objects;
@@ -24,6 +25,11 @@ class ChunkSorter implements Callable<Void> {
 
     @Override
     public Void call() throws Exception {
+        sort();
+        return null;
+    }
+
+    private void sort() throws IOException {
         var input = inputFileChannel.map(READ_ONLY, split.bytePosition, split.byteSize).asLongBuffer();
         var scratch = scratchFileChannel.map(READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
         assert input.position() == scratch.position() : "expected chunk in/out to have same position";
@@ -36,7 +42,6 @@ class ChunkSorter implements Callable<Void> {
         scratch.put(tmp);
         LOGGER.info("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
         scratch.reset();
-        return null;
     }
 
     @Override
@@ -61,5 +66,4 @@ class ChunkSorter implements Callable<Void> {
                 "scratchFileChannel=" + scratchFileChannel + ", " +
                 "split=" + split + ']';
     }
-
 }
