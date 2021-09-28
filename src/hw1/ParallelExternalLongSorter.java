@@ -11,9 +11,7 @@ import java.nio.LongBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.PriorityQueue;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,7 +26,6 @@ import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 import static java.nio.file.StandardOpenOption.*;
 //endregion
 
-@SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
 class ParallelExternalLongSorter {
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
     //region constants
@@ -36,37 +33,41 @@ class ParallelExternalLongSorter {
     //      having more or fewer threads reduced required overhead
     //      (required overhead=minimum to not throw an OOM heap error)
     private static final long MEMORY_OVERHEAD = 140 * MB;
-    private static final int BASE_CHUNK_MULTIPLIER = 1;
     private static final Logger LOGGER = Logger.getLogger(ParallelExternalLongSorter.class.getName());
     private final Path inputPath;
     private final Path outputPath;
+    private final Path tempFile;
     private final int nThreads;
+    private long inputSize;
     //endregion
 
-    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) {
+    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads) throws IOException {
         this.inputPath = inputPath;
         this.outputPath = outputPath;
         this.nThreads = nThreads;
-        //region pre-condition verification (and delete old output)
         LOGGER.info("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
         assert nThreads >= 1 : "must have at least 1 thread, not " + nThreads;
         assert !Files.isDirectory(inputPath) : "check yourself before you directoryour self";
         assert Files.isReadable(inputPath) : "input file is not readable";
         validateOutputPath(outputPath);
-        //endregion
+        this.tempFile =  Files.createTempFile("external-sort-scratch-space", ".tmp");
     }
 
     public void sort() throws IOException, InterruptedException, ExecutionException {
         LOGGER.info("starting setup");
-        Path tempFile = Files.createTempFile("external-sort-scratch-space", ".tmp");
         try (
                 FileChannel inputFileChannel = FileChannel.open(inputPath, Set.of(READ));
                 FileChannel scratchFileChannel = FileChannel.open(tempFile, Set.of(DELETE_ON_CLOSE, READ, WRITE));
                 FileChannel outputFileChannel = FileChannel.open(outputPath, Set.of(CREATE, READ, WRITE))
         ) {
+
+            this.inputSize = inputPath.toFile().length();
+
+            if (inputSize == 0) {
+                throw new RuntimeException("Abort: input file is empty");
+            }
             //region make output files same size as input size
             LOGGER.info("JUST GIMME SOME ROOM TO BREATHE (preparing scratch space)");
-            long inputSize = inputFileChannel.size();
             scratchFileChannel.truncate(inputSize);
             outputFileChannel.truncate(inputSize);
             //endregion
@@ -105,16 +106,24 @@ class ParallelExternalLongSorter {
             var outputLock = outputFileChannel.lock(0, outputFileChannel.size(), false);
             var scratchChunks = new LongBuffer[(int) splits.length];
             for (int i = 0; i < splits.length; i++) {
+                // TODO: what if instead of carving out chunks of a scratch file, create a private memory map?
+                //      not sure if supported on Windows
+                // TODO: check if OS is windows and install linux in the background
                 scratchChunks[i] = scratchFileChannel.map(READ_ONLY, splits[i].bytePosition, splits[i].byteSize).asLongBuffer();
             }
             var outputBuffer = outputFileChannel.map(READ_WRITE, 0, inputSize).asLongBuffer();
             //endregion
             //region merge, unlock, make fun of java
-            LOGGER.info("first element (pre-merge)" + outputBuffer.get(0));
-            LOGGER.info("last" + outputBuffer.get(outputBuffer.limit() - 1));
+            // NOTE: we always get at least 1 chunk because the floor for # of chunks is the # of threads
+            var first = scratchChunks[0];
+            // NOTE: we have at least 1 element, otherwise we would have thrown the Abort: empty input error
+            LOGGER.info("(pre-merge) chunks[0][0]=%d chunks[0][-1]=%d".formatted(
+                    first.get(0), first.get(first.limit() - 1)));
+            LOGGER.info("(pre-merge) output[0][0]=%d output[0][-1]=%d".formatted(
+                    outputBuffer.get(0), // NOTE: we have at least 1 element, otherwise we would have thrown an error earlier
+                    outputBuffer.get(outputBuffer.limit() - 1)));
             merge(scratchChunks, outputBuffer);
-            LOGGER.info("first element (post-merge)" + outputBuffer.get(0));
-            LOGGER.info("last" + outputBuffer.get(outputBuffer.limit() - 1));
+            LOGGER.info("(post-merge) first element=" + outputBuffer.get(0) + " last=" + outputBuffer.get(outputBuffer.limit() - 1));
             outputLock.release();
             scratchLock.release();
             LOGGER.info("doing the world a favor and ending another java process (all done)");
@@ -125,7 +134,6 @@ class ParallelExternalLongSorter {
     //region chunk count (how many splits/chunks should we make?)
 
     //endregion
-
 
     // TODO: too slow
     private void merge(LongBuffer[] presortedChunks, LongBuffer output) {
@@ -145,21 +153,8 @@ class ParallelExternalLongSorter {
         for (var c : presortedChunks) assert isSorted(c) : "expected scratch chunks to be pre-sorted";
         //endregion
 
-        //region implementation
-        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new Utils.ChunkHeadComparator());
-        // initially populate the heap with any non-empty chunk
-        for (var chunk : presortedChunks) {
-            if (chunk.hasRemaining()) minHeap.add(chunk);
-        }
-        LongBuffer chunkWithSmallestValue = minHeap.poll();
-        while (chunkWithSmallestValue != null) {
-            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
-            if (chunkWithSmallestValue.hasRemaining()) {
-                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
-            }
-            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
-        }
-        //endregion
+        var chunkMerger = new ChunkMerger(presortedChunks, output);
+        chunkMerger.merge();
 
         //region post-condition verification
         assert output.position() == output.limit() : "expected output buffer's position to be at limit"; // output is full

@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -19,7 +20,7 @@ class Utils {
     // for a recursive algorithm that operates on 2 mmap input and 1 mmap output,
     // there may be up to n * log2(n) mmaps held simultaneously
     public static final int MAX_CHUNK_COUNT = MAX_MAP_COUNT / LOG_BASE_2_OF_64000; // 4000
-
+    private static final Logger LOGGER = Logger.getLogger(Utils.class.getName());
 
     /**
      * This utility function gives an approximation for how much memory can safely be allocated
@@ -69,13 +70,18 @@ class Utils {
 
             if (memoryUsed > availableMemory) {
                 // not enough mem, we need at least 1 more than current count
-                lowerBound = count + 1;
+                count += 1;
+                lowerBound = count;
             } else {
                 // plenty of mem, we may (or may not) be able to use fewer chunks
                 upperBound = count;
             }
+            LOGGER.finest("nThreads=%d inputSize=%d count=%d availableMemory=%d memoryUsed=%d upperBound=%d lowerBound=%d".formatted(
+                    nThreads, inputSize, count, availableMemory, memoryUsed, upperBound, lowerBound));
         }
         if (getMemoryUsed(nThreads, inputSize, count) > availableMemory) {
+            LOGGER.severe("nThreads=%d inputSize=%d count=%d availableMemory=%d".formatted(
+                    nThreads, inputSize, count, availableMemory));
             throw new RuntimeException(
                     "It's not possible to sort an input of size " + inputSize + "with only " + availableMemory);
         }
