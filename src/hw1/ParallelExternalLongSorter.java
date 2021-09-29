@@ -76,13 +76,6 @@ class ParallelExternalLongSorter {
             if (inputSize != inputFileChannel.size()) throw new RuntimeException("Abort: input file changed on disk");
             LOGGER.info("JUST GIMME SOME ROOM TO BREATHE (preparing scratch space)");
 
-            // run Arrays.parallelSort on whole file
-            if (sortingMethod == "parallel" && nThreads > 1) {
-                ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES), sortingMethod);
-                chunkSorter.call();
-                return;
-            }
-
             //region plan where to split the input file
             LOGGER.info("can longs get covid? better put them in pods just to be safe (preparing chunks)");
             var maxMem = getMaximumTotalChunkMemory(MEMORY_OVERHEAD, 0, 0);
@@ -94,7 +87,7 @@ class ParallelExternalLongSorter {
             ChunkSorter[] chunkSorters = new ChunkSorter[chunkCount];
             for (int i = 0; i < splits.length; i++) {
                 var split = splits[i];
-                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split, sortingMethod);
+                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
                 chunkSorters[i] = chunkSorter;
             }
 
