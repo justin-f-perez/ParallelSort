@@ -1,12 +1,14 @@
 # Mobile Computing HW1: ParallelSort
 ## Quick start
 ### Java
-You can load this project in intellij to compile the java classes. Please don't commit your compiled output. There's an entrypoint in the ParallelExternalSorter class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code.
+You can load this project in intellij to compile the java classes. There's an entrypoint in the CommandLineInterface class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code. You can also find an example of commandline usage in the python jupyter and colab notebooks.
 
 ### Discussion (and python notebook)
+The main discussion document is located here: [discussion/discussion.md](discussion/discussion.md)
+
 Charts are implemented in a python notebook that automatically runs the sorting algorithm on all the required lenghts of input and # of threads. (Don't forget to build the java project first.) You should be able to just run [setup.sh](discussion/setup.sh) to create the virtual environment and install dependencies, then start the notebook server with [start.sh](discussion/start.sh). This should start the jupyter lab server and open it in your browser.
 
-For collaborative editing, there's a markdown document that we can convert to a PDF/doc/whatever later [discussion/discussion.md](discussion/discussion.md)
+Alternatively, use the Colab notebook. The Colab notebook has fewer options and less debugging output, but it also requires less setup because it clones and compiles the java files automatically.
 
 
 ## Contributing
@@ -110,6 +112,6 @@ make the commandline argument for number of threads optional and set a default
 
 > The constraint that we use Java only applies to the concurrent sorting program, right? (e.g., use whatever we want for creating line plots is fine?)
 
-"Any software would do." -Prof
+"Any software would do." -Professor
 
 _Technically, we don't even need to program the testing/plotting- for all he knows or cares, we could invoke by hand and do the plots in an Excel sheet. However, doing it by hand is a risk- if we discover some bug at the last minute and fix it, we would have to do all that work again by hand. Furthermore, automating it allows us to test and compare multiple implementations. -Justin_
