@@ -7,8 +7,9 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.logging.Logger;
 
+import static hw1.Utils.getChunkMergerClass;
 import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
-import static java.nio.file.StandardOpenOption.*;
+import static java.nio.file.StandardOpenOption.READ;
 
 public class CommandLineInterface {
     static final String DEFAULT_INPUT_FILENAME = "array.bin";
@@ -22,6 +23,7 @@ public class CommandLineInterface {
         String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
         String outputFileName = (args.length < 2) ? DEFAULT_OUTPUT_FILENAME : args[1];
         final int nThreads = (args.length < 3) ? DEFAULT_NTHREADS : Integer.parseInt(args[2]);
+        var chunkMergerClass = (args.length < 4) ? PairwiseChunkMerger.class : getChunkMergerClass(args[3]);
         final Path inputPath = Paths.get(inputFileName).toAbsolutePath();
         final Path outputPath = Paths.get(outputFileName).toAbsolutePath();
         LOGGER.info("you put your long ints in " + inputPath);
@@ -34,7 +36,7 @@ public class CommandLineInterface {
         LOGGER.info((oldOutputDeleted ? "get that nasty mess out of here " : "it was like that when i got here!") + outputPath);
 
         //region test data generation
-        if (args.length >= 4) {
+        if (args.length >= 5) {
             final int inputLength = Integer.parseInt(args[3]); // unit = # of long values
             long generatorStart = System.nanoTime();
             new DataFileGenerator(inputPath.toString(), inputLength).generate();
@@ -45,7 +47,7 @@ public class CommandLineInterface {
         }
         //endregion
 
-        var sorter = new ParallelExternalLongSorter(inputPath, outputPath, nThreads);
+        var sorter = new ParallelExternalLongSorter(inputPath, outputPath, nThreads, chunkMergerClass);
         sorter.sort();
 
         //region post-condition verification

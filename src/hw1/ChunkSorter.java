@@ -30,8 +30,6 @@ class ChunkSorter implements Callable<Void> {
     }
 
     private void sort() throws IOException {
-        var inputLock = inputFileChannel.lock(split.bytePosition, split.byteSize, true);
-        var outputLock = outputFileChannel.lock(split.bytePosition, split.byteSize, false);
         var input = inputFileChannel.map(READ_ONLY, split.bytePosition, split.byteSize).asLongBuffer();
         var output = outputFileChannel.map(READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
         assert input.position() == output.position() : "expected chunk in/out to have same position";
@@ -44,8 +42,6 @@ class ChunkSorter implements Callable<Void> {
         output.put(tmp);
         LOGGER.info("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
         output.reset();
-        inputLock.release();
-        outputLock.release();
     }
 
     @Override

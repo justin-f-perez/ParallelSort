@@ -41,6 +41,10 @@ class Utils {
         return Runtime.getRuntime().maxMemory() - overhead;
     }
 
+    static Class<? extends ChunkMerger> getChunkMergerClass(String className) throws ClassNotFoundException {
+        return (Class<? extends ChunkMerger>) Class.forName(className);
+    }
+
 
     /**
      * implementation is basically a binary search for the minimum returnValue satisfying the
