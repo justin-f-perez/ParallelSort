@@ -5,253 +5,204 @@
 //region imports
 package hw1;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.Buffer;
 import java.nio.LongBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.*;
-import java.util.concurrent.Callable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static hw1.Utils.*;
 import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 import static java.nio.file.StandardOpenOption.*;
 //endregion
 
-public class ParallelExternalLongSorter {
-
-    //region constants
+class ParallelExternalLongSorter {
     static final int THREADPOOL_TIMEOUT_SECONDS = 60;
-    static final String DEFAULT_INPUT_FILENAME = "array.bin";
-    static final String DEFAULT_OUTPUT_FILENAME = "sorted.bin";
-    static final int DEFAULT_NTHREADS = Runtime.getRuntime().availableProcessors();
-    private static final int BASE_CHUNK_MULTIPLIER = 1;
-    static final String DEFAULT_SORTING_METHOD = "chunk";
+    //region constants
+    // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
+    //      having more or fewer threads reduced required overhead
+    //      (required overhead=minimum to not throw an OOM heap error)
+    private static final long MEMORY_OVERHEAD = 140 * MB;
+    private static final Logger LOGGER = Logger.getLogger(ParallelExternalLongSorter.class.getName());
+    private final Path inputPath;
+    private final Path outputPath;
+    private final Path tempFile;
+    private final int nThreads;
+    private final long inputSize;
+    private final long maxMem;
+    private final int chunkCount;
+    private final Class<? extends ChunkMerger> chunkMergerType;
+    private ArrayList<Split> remainingSplits;
     //endregion
 
-    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads, String sortingMethod) throws Exception {
-        //region pre-condition verification (and delete old output)
-        debug("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
+    public ParallelExternalLongSorter(Path inputPath, Path outputPath, int nThreads, Class<? extends ChunkMerger> chunkMergerType) throws IOException {
+        this.chunkMergerType = chunkMergerType;
+        this.inputPath = inputPath;
+        this.outputPath = outputPath;
+        this.nThreads = nThreads;
+        LOGGER.info("either lying to you or verifying constructor args (enable assertions, add '-ea' in your JVM opts)");
         assert nThreads >= 1 : "must have at least 1 thread, not " + nThreads;
         assert !Files.isDirectory(inputPath) : "check yourself before you directoryour self";
         assert Files.isReadable(inputPath) : "input file is not readable";
-        var oldOutputDeleted = outputPath.toFile().delete();
-        debug((oldOutputDeleted ? "get that nasty mess out of here " : "it was like that when i got here!") + outputPath);
         validateOutputPath(outputPath);
-        //endregion
+        this.tempFile = Files.createTempFile("external-sort-scratch-space", ".tmp");
+        this.inputSize = inputPath.toFile().length();
+        if (inputSize == 0) throw new RuntimeException("Abort: input file is empty");
+        this.maxMem = getMaximumTotalChunkMemory(MEMORY_OVERHEAD, 0, 0);
+        this.chunkCount = getChunkCount(this.nThreads, inputSize, maxMem);
+        var splits = Split.createSplits(inputSize, chunkCount);
+        this.remainingSplits = new ArrayList<>(List.of(splits));
+    }
 
-        debug("starting setup");
-        Path tempFile = Files.createTempFile("external-sort-scratch-space", ".tmp");
+    public void sort() throws IOException, InterruptedException, ExecutionException, NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
+        LOGGER.info("starting setup");
         try (
                 FileChannel inputFileChannel = FileChannel.open(inputPath, Set.of(READ));
-                FileChannel scratchFileChannel = FileChannel.open(tempFile, Set.of(DELETE_ON_CLOSE, READ, WRITE));
-                FileChannel outputFileChannel = FileChannel.open(outputPath, Set.of(CREATE, READ, WRITE))
+                FileChannel scratchFileChannel = FileChannel.open(tempFile, Set.of(READ, WRITE))
         ) {
-            //region make output files same size as input size
-            debug("JUST GIMME SOME ROOM TO BREATHE (preparing scratch space)");
-            long inputSize = inputFileChannel.size();
-            scratchFileChannel.truncate(inputSize);
-            outputFileChannel.truncate(inputSize);
-            //endregion
-
-            // run Arrays.parallelSort on whole file
-            if (sortingMethod == "parallel" && nThreads > 1) {
-                ChunkSorter chunkSorter = new ChunkSorter(inputFileChannel, outputFileChannel, new Split(0, inputFileChannel.size()/Long.BYTES), sortingMethod);
-                chunkSorter.call();
-                return;
-            }
+            if (inputSize != inputFileChannel.size()) throw new RuntimeException("Abort: input file changed on disk");
+            LOGGER.info("JUST GIMME SOME ROOM TO BREATHE (preparing scratch space)");
 
             //region plan where to split the input file
-            debug("can longs get covid? better put them in pods just to be safe (preparing chunks)");
-            int chunkCount = getChunkCount(nThreads, inputSize);
+            LOGGER.info("can longs get covid? better put them in pods just to be safe (preparing chunks)");
+            var maxMem = getMaximumTotalChunkMemory(MEMORY_OVERHEAD, 0, 0);
+            int chunkCount = getChunkCount(nThreads, inputSize, maxMem);
+            LOGGER.info("Count Chunkula: " + chunkCount);
             Split[] splits = Split.createSplits(inputSize, chunkCount);
             //endregion
             //region split it up (logically) by telling chunk sorters where they're going to sort
             ChunkSorter[] chunkSorters = new ChunkSorter[chunkCount];
             for (int i = 0; i < splits.length; i++) {
                 var split = splits[i];
-                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split, sortingMethod);
+                var chunkSorter = new ChunkSorter(inputFileChannel, scratchFileChannel, split);
                 chunkSorters[i] = chunkSorter;
             }
 
             //endregion
             //region create a pool to manage threads, give it tasks (chunk sorter), then wait for it to finish executing them all
-            debug("these sheets are so soft! just look at that thread count: " + nThreads);
-            debug("is this expired? its getting chunky (queueing chunk sort jobs)");
+            LOGGER.info("these sheets are so soft! just look at that thread count: " + nThreads);
+            LOGGER.info("is this expired? its getting chunky (queueing chunk sort jobs)");
             ExecutorService executor = Executors.newFixedThreadPool(nThreads);
             var futures = executor.invokeAll(List.of(chunkSorters));
-            debug("YOU'RE GONNA BE FRIENDS WHETHER YOU LIKE IT OR NOT! (joining threads)");
+            LOGGER.info("YUCK! SOMEONE SORTED IN THE POOL! (joining sort threads)");
             executor.shutdown();  //tell the pool we're done giving it work
-            debug("GET TO THE CHOPPA! (awaiting threadpool termination)");
+            LOGGER.info("I'LL BE BACK! (awaiting sort threadpool termination)");
             // blocks until all tasks complete
             boolean timedOut = !executor.awaitTermination(THREADPOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (timedOut) throw new RuntimeException("threadpool timed out");
-            for (var future: futures) future.get(); // propagate exceptions from child threads
-            //endregion
-
-            //region lock files, make scratch file chunks
-            var scratchLock = scratchFileChannel.lock(0, scratchFileChannel.size(), false);
-            var outputLock= outputFileChannel.lock(0, outputFileChannel.size(), false);
-            var scratchChunks = new LongBuffer[(int)splits.length];
-            for (int i = 0; i < splits.length; i++) {
-                scratchChunks[i] = scratchFileChannel.map(READ_ONLY, splits[i].bytePosition, splits[i].byteSize).asLongBuffer();
-            }
-            var outputBuffer = outputFileChannel.map(READ_WRITE, 0, inputSize).asLongBuffer();
-            //endregion
-            //region merge, unlock, make fun of java
-            debug("first element (pre-merge)" + outputBuffer.get(0));debug("last" + outputBuffer.get(outputBuffer.limit() - 1));
-            merge(scratchChunks, outputBuffer);
-            debug("first element (post-merge)" + outputBuffer.get(0));debug("last" + outputBuffer.get(outputBuffer.limit() - 1));
-            outputLock.release();
-            scratchLock.release();
-            debug("doing the world a favor and ending another java process (all done)");
+            if (timedOut) throw new RuntimeException("sort threadpool timed out");
+            LOGGER.info("Back to the future- now with parallel timelines! (propagating sorting exceptions)");
+            for (var future : futures) future.get(); // propagate exceptions from child threads
+            LOGGER.info("Nevermind, the timelines collapsed. (no exceptions)");
             //endregion
         }
-    }
-
-    //region debug utils
-    private static void debug(String msg) {System.out.println("DEBUG [" + System.nanoTime() + "]: " + msg);}
-    private static void debug(Object msg) {System.out.println("DEBUG [" + System.nanoTime() + "]: " + msg);}
-    //endregion
-
-    public static void main(String[] args) throws Exception {
-        //region arg parsing
-        long start = System.currentTimeMillis();
-        debug(args);
-        String inputFileName = (args.length < 1) ? DEFAULT_INPUT_FILENAME : args[0];
-        String outputFileName = (args.length < 2) ? DEFAULT_OUTPUT_FILENAME : args[1];
-        final int nThreads = (args.length < 3) ? DEFAULT_NTHREADS : Integer.parseInt(args[2]);
-        String sortingMethod = (args.length < 4) ? DEFAULT_SORTING_METHOD : args[3];
-        final Path inputPath = Paths.get(inputFileName).toAbsolutePath();
-        final Path outputPath = Paths.get(outputFileName).toAbsolutePath();
-        debug("you put your long ints in " + inputPath);
-        debug("you take your long ints out" + outputPath);
-        debug("hardcore, " + DEFAULT_NTHREADS + " cores");
-        //endregion
-
-        //region test data generation
-        if (args.length >= 4) {
-            final int inputLength = Integer.parseInt(args[3]); // unit = # of long values
-            long generatorStart = System.nanoTime();
-            new DataFileGenerator(inputPath.toString(), inputLength).generate();
-            long generatorStop = System.nanoTime();
-            double generatorElapsedSeconds = (double) (generatorStop - generatorStart) / Math.pow(10, 9);
-            System.out.printf("Finished writing test file with %d long integers in %,.3f seconds%n",
-                    inputLength, generatorElapsedSeconds);
-        }
-        //endregion
-
-        new ParallelExternalLongSorter(inputPath, outputPath, nThreads, DEFAULT_SORTING_METHOD);
-        //region post-condition verification
         try (
-                FileChannel inFC = FileChannel.open(inputPath, Set.of(READ));
-                FileChannel outFC = FileChannel.open(outputPath, Set.of(READ, WRITE))
+                FileChannel scratchFileChannel = FileChannel.open(tempFile, Set.of(DELETE_ON_CLOSE, READ, WRITE));
+                FileChannel outputFileChannel = FileChannel.open(outputPath, Set.of(CREATE, READ, WRITE))
         ) {
-            assert (inFC.size() == outFC.size()) : "expected in size (" + inFC.size() + ") == out size (" + outFC.size() + ")";
-            var in = inFC.map(READ_ONLY, 0, inFC.size()).asLongBuffer();
-            var out = outFC.map(READ_ONLY, 0, outFC.size()).asLongBuffer();
-            assert isEmpty(in) == isEmpty(out) : "expected output to be all 0's only if input is all 0's";
+            //region merge & make fun of java
+
+            //  we're going to merge back and forth between scratch and output, and fix it up at the end
+            // i.e., 1st iteration channels[dst] == scratch, then we'll do dst = (dst + 1) % 2
+            // then at the end if the last channels[dst] we wrote to was scratch, we'll just do a quick swap
+            int src = 0, dst = 1;
+            var channels = new FileChannel[]{scratchFileChannel, outputFileChannel};
+            while (remainingSplits.size() > 1) {
+                var mergers = new ArrayList<ChunkMerger>();
+                ArrayList<Split> mergedSplits = new ArrayList<>();
+                var splitPairs = Split.groupSplits(remainingSplits).iterator();
+                LongBuffer[] srcChunks = null;
+                LongBuffer dstBuffer = null;
+
+                assert splitPairs.hasNext();
+                while (splitPairs.hasNext()) {
+                    var pair = splitPairs.next();
+                    assert pair.length == 2 || pair.length <= 1;
+
+                    Split mergedSplit = (pair.length == 2) ? new Split(pair[0], pair[1]) : pair[0];
+                    mergedSplits.add(mergedSplit);
+
+                    srcChunks = getChunks(channels[src], pair);
+                    dstBuffer = channels[dst].map(READ_WRITE, mergedSplit.bytePosition, mergedSplit.byteSize).asLongBuffer();
+                    mergers.add(makeChunkMerger(srcChunks, dstBuffer));
+                }
+                //region merge pool
+                checkMergePreconditions(srcChunks, dstBuffer);
+                ExecutorService executor = Executors.newFixedThreadPool(nThreads);
+                var futures = executor.invokeAll(mergers);
+                LOGGER.info("YOU'RE GONNA BE FRIENDS WHETHER YOU LIKE IT OR NOT! (joining merge threads)");
+                executor.shutdown();  //tell the pool we're done giving it work
+                LOGGER.info("GET TO THE CHOPPA! (awaiting merge threadpool termination)");
+                boolean timedOut1 = !executor.awaitTermination(THREADPOOL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (timedOut1) throw new RuntimeException("merge threadpool timed out");
+                LOGGER.info("Hunting bugs from the future- im-doing-my-part.gif (propagating sorting exceptions)");
+                for (var future : futures) future.get(); // propagate exceptions from child threads
+                LOGGER.info("The only good bug is a dead bug. (no exceptions)");
+                //endregion
+                checkMergePostconditions(srcChunks, dstBuffer);
+                LOGGER.info("Ti esrever dna ti pilf nwod gnaht ym tup i");
+                // swap src/dst
+                src = (src + 1) % 2;
+                dst = (dst + 1) % 2;
+                this.remainingSplits = mergedSplits;
+            }
+            // src and dst are reversed from the tail of the last iteration of the loop
+            boolean shouldSwap = channels[dst].equals(outputFileChannel);
+            if (shouldSwap) scratchFileChannel.transferTo(0, scratchFileChannel.size(), outputFileChannel);
+            LOGGER.info("doing the world a favor and ending another java process (all done)");
         }
+    }
+
+    private ChunkMerger makeChunkMerger(LongBuffer[] srcChunks, LongBuffer dstBuffer) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+        return this.chunkMergerType.getDeclaredConstructor(
+                LongBuffer[].class, LongBuffer.class).newInstance(srcChunks, dstBuffer);
+    }
+
+    private LongBuffer[] getChunks(FileChannel scratchFileChannel, Split[] splits) throws IOException {
+        // TODO: what if instead of carving out chunks of a scratch file, create a private memory map?
+        //      not sure if supported on Windows
+        // TODO: check if OS is windows and install linux in the background
+        var scratchChunks = new LongBuffer[(int) splits.length];
+        for (int i = 0; i < splits.length; i++) {
+            scratchChunks[i] = scratchFileChannel.map(READ_ONLY, splits[i].bytePosition, splits[i].byteSize).asLongBuffer();
+        }
+        return scratchChunks;
+    }
+
+    private void checkMergePostconditions(LongBuffer[] presortedChunks, LongBuffer output) {
+        //region post-condition verification
+        LOGGER.info("(post-merge) first element=" + output.get(0) + " last=" + output.get(output.limit() - 1));
+        assert output.position() == output.limit() : "expected output buffer's position="
+                + output.position() + " to be at limit" + output.limit(); // output is full
+        assert Stream.of(presortedChunks).noneMatch(Buffer::hasRemaining) : "expected all chunks to be drained"; // all elements in scratch space written to output
+        assert isSorted(output) : "expected output to be sorted";
+        LOGGER.info("wow, the chunks are gone! you really can use coconut oil for everything (merge finished)");
         //endregion
-
-        long stop = System.currentTimeMillis();
-
-        System.out.printf("Total execution time: %d ms%n", stop - start);
     }
 
-    //region verification utils
-    private static void validateOutputPath(Path outputPath) {
-        debug("bb pls" + outputPath);
-        // cuz if the output file already exists and its already sorted, we can't tell if the program worked or
-        // if it just happened to not crash
-        assert !outputPath.toFile().exists() : "expected outputPath not to exist";
-        Path parent = outputPath.getParent();
-        debug("who's ya directory" + parent);
-        assert Files.exists(parent) : "parent directory of output path doesn't exist";
-        assert Files.isWritable(parent) : "parent directory of output path isn't writable";
-    }
-
-    private static boolean isSorted(LongBuffer lb) {
-        return IntStream.range(0, lb.limit() - 1).allMatch(i -> lb.get(i) <= lb.get(i + 1));
-    }
-
-    private static boolean isEmpty(LongBuffer lb) {
-        return IntStream.range(0, lb.limit()).allMatch(i -> lb.get(i) == 0);
-    }
-    //endregion
-
-    //region chunk count (how many splits/chunks should we make?)
-    /*
-    Returns the number of chunks that the input file should be split into.
-    Considerations for the choice of count:
-    (1) We have up to N `ChunkSorter`s each holding inputSize / chunkCount bytes in physical memory concurrently
-    during the first pass
-    (2) During the second pass, we should implement some data structure for efficiently
-    taking the minimum value among the heads of the chunks (e.g., a min heap) - this also needs to be held in memory,
-    but only after the first pass is complete
-    (3) more chunks means we'll be doing more seeking within the file; the OS should be able to efficiently swap pages
-    in and out of cache because we're using memory mapped IO and accessing each chunk sequentially, but for a
-    ridiculously large number of chunks we won't have sufficient physical memory to hold the head of each chunk in
-    cache concurrently. This would result in a lot of swapping between physical memory and disk
-    (4) assuming the input is sufficiently large, chunk count should be >= parallelism
-     */
-    private int getChunkCount(int nThreads, long inputByteSize) {
-        // TODO: is it always more efficient to initialize count to some multiple of parallelism?
-        //      it could be the case that some chunks, by chance, happen to sort more quickly than others
-        //      thus, it would be beneficial to have more (smaller) chunks so that all threads can stay busy
-        //      until the entire input is sorted
-        //      ... so if the answer is "yes", we should initialize chunkMultiplier to a higher value
-        long workingMemoryLimit = getWorkingMemoryLimit(), expectedPeakMemoryUse;
-        int count, chunkMultiplier = BASE_CHUNK_MULTIPLIER - 1;
-
-        do {
-            chunkMultiplier = chunkMultiplier + 1;
-            count = nThreads * chunkMultiplier;
-            expectedPeakMemoryUse = (inputByteSize / count) * nThreads;
-        } while (expectedPeakMemoryUse > workingMemoryLimit && 60000 >= count && count >= 0);
-
-        if (count > 60000) {
-            // on most systems Java will choke if you try to do ~64k+ mmaps
-            // src: https://mapdb.org/blog/mmap_files_alloc_and_jvm_crash/
-            throw new RuntimeException("Aborting: Attempted to allocate too many chunks");
-        }
-
-        assert count > 0 : "integer overflow occurred while trying to get chunk count";
-        debug("Count Chunkula: " + count);
-        var MB = Math.pow(10,6);
-        debug("peak chonk (nThreads * MB / # of chunks): " + expectedPeakMemoryUse/MB);
-        return count;
-    }
-    //endregion
-
-    //region chunk sizing helper (how much room we have for in-memory sorting)
-    private long getWorkingMemoryLimit() {
-        // final long GB = (long) Math.pow(10, 9); // Gigabyte (SI unit)
-        final long MB = (long) Math.pow(10, 6); // Megabyte (SI unit)
-
-        // save some space on the heap for overhead
-        // experimental findings: required overhead peaked at 70 MB w/ 4 threads on an 8 core machine
-        //      having more or fewer threads reduced required overhead
-        //      (required overhead=minimum to not throw an OOM heap error)
-        final long overhead = 140 * MB;
-        //  Maximum heap size: "Smaller of 1/4th of the physical memory or 1 GB"
-        //      src: https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html
-        var workingMemoryLimit = Runtime.getRuntime().maxMemory() - overhead;
-        debug("Pepperidge Farm remembers (MB): " + (workingMemoryLimit / MB));
-        return workingMemoryLimit;
-    }
-    //endregion
-
-    // TODO: too slow
-    private void merge(LongBuffer[] presortedChunks, LongBuffer output) {
+    private void checkMergePreconditions(LongBuffer[] presortedChunks, LongBuffer output) {
+        // NOTE: we always get at least 1 chunk because the floor for # of chunks is the # of threads
+        var first = presortedChunks[0];
+        // NOTE: we have at least 1 element, otherwise we would have thrown the Abort: empty input error
+        LOGGER.info("(pre-merge) chunks[0][0]=%d chunks[0][-1]=%d".formatted(
+                first.get(0), first.get(first.limit() - 1)));
+        LOGGER.info("(pre-merge) output[0][0]=%d output[0][-1]=%d".formatted(
+                output.get(0), // NOTE: we have at least 1 element, otherwise we would have thrown an error earlier
+                output.get(output.limit() - 1)));
         //region precondition verification
-        debug("applying coconut oil (verifying merge preconditions)");
+        LOGGER.info("applying coconut oil (verifying merge preconditions)");
         // check preconditions
         assert output.position() == 0 : "expected output buffer to start at position 0";  // nothing has been written to output yet
         // output buffer is same size as cumulative size of presortedChunks
@@ -265,100 +216,5 @@ public class ParallelExternalLongSorter {
                 i -> presortedChunks[i].limit() == 0 || presortedChunks[i].get(0) != presortedChunks[i + 1].get(0));
         for (var c : presortedChunks) assert isSorted(c) : "expected scratch chunks to be pre-sorted";
         //endregion
-
-        //region implementation
-        PriorityQueue<LongBuffer> minHeap = new PriorityQueue<>(new ChunkHeadComparator());
-        // initially populate the heap with any non-empty chunk
-        for (var chunk : presortedChunks) {
-            if (chunk.hasRemaining()) minHeap.add(chunk);
-        }
-        LongBuffer chunkWithSmallestValue = minHeap.poll();
-        while (chunkWithSmallestValue != null) {
-            output.put(chunkWithSmallestValue.get()); // side effect: advances position fields of outputBuffer and chunk
-            if (chunkWithSmallestValue.hasRemaining()) {
-                minHeap.add(chunkWithSmallestValue);  // if this buffer still has elements, add it back into the heap
-            }
-            chunkWithSmallestValue = minHeap.poll();  // poll() returns null when the heap is empty
-        }
-        //endregion
-
-        //region post-condition verification
-        assert output.position() == output.limit() : "expected output buffer's position to be at limit"; // output is full
-        assert Stream.of(presortedChunks).noneMatch(Buffer::hasRemaining) : "expected all chunks to be drained"; // all elements in scratch space written to output
-        assert isSorted(output) : "expected output to be sorted";
-        debug("wow, the chunks are gone! you really can use coconut oil for everything (merge finished)");
-        //endregion
     }
-
-    //region merge util
-    private static class ChunkHeadComparator implements Comparator<LongBuffer> {
-        @Override
-        public int compare(LongBuffer left, LongBuffer right) {
-            return Long.compare(left.get(left.position()), right.get(right.position()));
-        }
-    }
-    //endregion
-
-    //region chunk sort
-    @SuppressWarnings("ClassCanBeRecord") // suppressed because colab notebook's version of java doesn't support 'record'
-    private static final class ChunkSorter implements Callable<Void> {
-        private final FileChannel inputFileChannel;
-        private final FileChannel scratchFileChannel;
-        private final Split split;
-        private final String sortingMethod;
-
-        private ChunkSorter(FileChannel inputFileChannel, FileChannel scratchFileChannel, Split split, String sortingMethod) {
-            this.inputFileChannel = inputFileChannel;
-            this.scratchFileChannel = scratchFileChannel;
-            this.split = split;
-            this.sortingMethod = sortingMethod;
-        }
-
-        @Override
-        public Void call() throws Exception {
-            var input = inputFileChannel.map(READ_ONLY, split.bytePosition, split.byteSize).asLongBuffer();
-            var scratch = scratchFileChannel.map(READ_WRITE, split.bytePosition, split.byteSize).asLongBuffer();
-            assert input.position() == scratch.position() : "expected chunk in/out to have same position";
-            assert input.limit() == scratch.limit() : "expected chunk in/out to have same limit";
-            debug("preparing outdated VCR references (sorting chunk)");
-            scratch.mark();
-            long[] tmp = new long[input.remaining()];
-            input.get(tmp);
-            if (sortingMethod == "parallel" ) {
-                Arrays.parallelSort(tmp);
-            }
-            else {
-                Arrays.sort(tmp);
-            }
-            scratch.put(tmp);
-            debug("be kind, rewind (finished sorting chunk, rewinding chunk buffer)");
-            scratch.reset();
-            return null;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj == this) return true;
-            if (obj == null || obj.getClass() != this.getClass()) return false;
-            var that = (ChunkSorter) obj;
-            return Objects.equals(this.inputFileChannel, that.inputFileChannel) &&
-                    Objects.equals(this.scratchFileChannel, that.scratchFileChannel) &&
-                    Objects.equals(this.split, that.split);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(inputFileChannel, scratchFileChannel, split);
-        }
-
-        @Override
-        public String toString() {
-            return "ChunkSorter[" +
-                    "inputFileChannel=" + inputFileChannel + ", " +
-                    "scratchFileChannel=" + scratchFileChannel + ", " +
-                    "split=" + split + ']';
-        }
-
-    }
-    //endregion
 }
