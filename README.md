@@ -1,15 +1,39 @@
 # Mobile Computing HW1: ParallelSort
-## Quick start
-### Java
-You can load this project in intellij to compile the java classes. There's an entrypoint in the CommandLineInterface class that provides its own default arguments (if you don't supply any). You can set a breakpoint here and hit debug if you just want to do a quick test to step through the code. You can also find an example of commandline usage in the python jupyter and colab notebooks.
+## Discussion
+The main discussion document is a markdown document located at discussion/discussion.md in this repository. You can view it in your browser on GitHub at: https://github.com/justin-f-perez/ParallelSort/discussion/discussion.md 
 
-### Discussion (and python notebook)
-The main discussion document is located here: [discussion/discussion.md](discussion/discussion.md)
+Note: the discussion markdown document references images located in the same directory so if you move it to another directory the images won't appear.
 
-Charts are implemented in a python notebook that automatically runs the sorting algorithm on all the required lenghts of input and # of threads. (Don't forget to build the java project first.) You should be able to just run [setup.sh](discussion/setup.sh) to create the virtual environment and install dependencies, then start the notebook server with [start.sh](discussion/start.sh). This should start the jupyter lab server and open it in your browser.
+## Running the project
+### Colab Notebook (quickstart/easy-mode notebook for benchmarking/chart generation)
+1. In your web browser, navigate to [https://colab.research.google.com/github/justin-f-perez/ParallelSort/blob/main/discussion/colab_discussion.ipynb](https://colab.research.google.com/github/justin-f-perez/ParallelSort/blob/main/discussion/colab_discussion.ipynb)
+2. (Optional) Change benchmark options
+3. Click Runtime (in the toolbar near the top of the colab notebook)
+4. Click 'Run all' (in the Runtime toolbar menu)
 
-Alternatively, use the Colab notebook. The Colab notebook has fewer options and less debugging output, but it also requires less setup because it clones and compiles the java files automatically.
+This is the easiest method to run the code because it runs in a (free) cloud environment, automatically:
+* installing a compatible version of java into the cloud environment
+* compiling the java code in this project
+* executes it against many combinations of (configurable) test parameters
+* generates charts from the timed results
 
+#### Configuring Benchmark Options
+You can also tweak the configuration parameters using the controls in the right-split of the first code cell. For example, you can use the 'iterations' slider to control how many times to execute each combination of parameters- results are averaged in the charts). 
+
+### Jupyter Notebook (alternative to Colab notebook; local notebook for benchmarking/chart generation)
+[This python notebook](discussion/discussion.ipynb) is similar to the Colab version, but meant to be run locally (whereas the Colab version is not). Charts embedded in the discussion document were generated from this version. This version of the notebook will not install Java for you or compile the Java code. If you'd like to run it:
+1. you should first compile the Java classes (e.g., using an IDE)
+2. install the python dependencies in requirements.txt.
+3. start the Jupyter Lab server in the same directory as this repository.
+4. open discussion/discussion.ipynb python notebook in Jupyter Lab (in your browser)
+
+A shell script is provided for convenience to create a python virtual environment to install the python dependencies into, [setup.sh](discussion/setup.sh), and another script for activating the python virtual environment/starting the Jupyter Lab server [start.sh](discussion/start.sh).
+
+### IDE (compile/run/debug the Java code)
+You can open this project repository in an IDE such as IntelliJ to compile, run, and debug. The main entrypoint is in the CommandLineInterface class (and provides its own default arguments if you don't supply any). You can supply your own custom commandline arguments and configure the Java SDK to compile against inside of intellij via Run -> Edit Configurations. 
+
+### Commandline (compile/run the Java code)
+The Colab Notebook runs in the cloud in a linux environment, so if you'd like to compile and run from the commandline on your local machine, you should start by inspecting the [first few code cells in the Colab Notebook](discussion/colab-notebook.ipynb)
 
 ## Contributing
 ### tips
