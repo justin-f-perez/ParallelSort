@@ -33,7 +33,7 @@ A shell script is provided for convenience to create a python virtual environmen
 You can open this project repository in an IDE such as IntelliJ to compile, run, and debug. The main entrypoint is in the CommandLineInterface class (and provides its own default arguments if you don't supply any). You can supply your own custom commandline arguments and configure the Java SDK to compile against inside of intellij via Run -> Edit Configurations. 
 
 ### Commandline (compile/run the Java code)
-The Colab Notebook runs in the cloud in a linux environment, so if you'd like to compile and run from the commandline on your local machine, you should start by inspecting the [first few code cells in the Colab Notebook](discussion/colab-notebook.ipynb)
+The Colab Notebook runs in the cloud in a linux environment, so if you'd like to compile and run from the commandline on your local machine, you should start by inspecting the [first few code cells in the Colab Notebook](discussion/colab_discussion.ipynb)
 
 ## Contributing
 ### tips
