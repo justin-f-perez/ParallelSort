@@ -1,6 +1,6 @@
 # Mobile Computing HW1: ParallelSort
 ## Discussion
-The main discussion document is a markdown document located at discussion/discussion.md in this repository. You can view it in your browser on GitHub at: https://github.com/justin-f-perez/ParallelSort/discussion/discussion.md 
+The main discussion document is a markdown document located at discussion/discussion.md in this repository. You can view it in your browser on GitHub at: https://github.com/justin-f-perez/ParallelSort/blob/main/discussion/discussion.md 
 
 Note: the discussion markdown document references images located in the same directory so if you move it to another directory the images won't appear.
 
